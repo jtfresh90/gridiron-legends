@@ -1075,16 +1075,49 @@ function teamTex(color){if(CH.texC[color])return CH.texC[color];let out=CH.tex;t
   x.putImageData(d,0,0);out=tex(c);}catch(e){}return CH.texC[color]=out;}
 function helmetParts(t,g,line,hi,skin){const g_=mkGeo(),r=.148,PI=Math.PI,hc=t.helmet,mk=t.mask||'#dddddd',c2=t.c2,hp=[P(g_.shell,hc,0,0,0,r,r*1.03,r*1.12),P(g_.ball,'#0c0d10',0,0,0,r*.93,r*.95,r*1.04),P(g_.stripe,c2,0,0,0,.86*1.12,.86*1.03,1,0,PI/2,0),hi&&P(g_.box,'#f4f4f4',0,-.95*r,-.78*r,.06,.03,.035),hi&&P(g_.box,c2,0,-.5*r,1.1*r,.09,.03,.025)];
  if(skin)hp.push(P(g_.ball,skin,0,-.28*r,-.48*r,.6*r,.68*r,.64*r));for(const y of hi?[-.18,-.5,-.82]:[-.3,-.75])hp.push(P(g_.bar,mk,0,y*r,-.42*r,.84,.84,.84,PI/2,0,PI));for(const x of line?[-.042,.042]:[0])hp.push(P(g_.vbar,mk,x,-.5*r,-.42*r-.1175,1,line?.66:.44,1));return hp;}
+/* phase 4: selectable helmet models (Edit Player -> p.g.helm). Option 0 is the
+   model's own stock headgear; options 1-4 are rigid FBX modules in the same GLM
+   format as the clips, staged in the character's own space at exactly the stock
+   helmet's placement, so no per-helmet offsets exist anywhere. They load on
+   demand through getModel; until a module lands, the stock helmet renders, and
+   the load's completion rebuilds bodies so the choice appears. */
+const HELMET_OPTS=[null,
+ {slug:'helmet_bills',label:'Bills SpeedFlex'},
+ {slug:'helmet_football_helmet_2',label:'Midnight Navy'},
+ {slug:'helmet_football_helmet',label:'SpeedFlex Style'},
+ {slug:'helmet_helmet',label:'Ridged Classic'}];
+const HELM_MOD={},HELM_LOAD={};
+function helmIdx(p){const v=p&&p.g?+p.g.helm||0:0;return v>0&&v<HELMET_OPTS.length?v:0;}
+/* which imported objects are shells that take the team helmet colour: only the
+   two untextured imports. bills keeps its own livery; football_helmet_2 keeps
+   its own navy texture. Everything else keeps its staged colours. */
+function helmShell(slug,name){if(slug==='helmet_football_helmet')return name==='shell';if(slug==='helmet_helmet')return name==='shell'||name==='shell_strips';return false;}
+function loadHelmMod(slug){if(HELM_MOD[slug]||HELM_LOAD[slug]||!T||!T.FBXLoader)return;HELM_LOAD[slug]=1;try{getModel(new T.FBXLoader(),slug,o=>{HELM_MOD[slug]=o;HELM_LOAD[slug]=0;clearBodies();},()=>{HELM_LOAD[slug]=0;});}catch(e){HELM_LOAD[slug]=0;}}
+function helmGet(idx){const o=HELMET_OPTS[idx];if(!o)return null;if(!HELM_MOD[o.slug])loadHelmMod(o.slug);return HELM_MOD[o.slug]||null;}
+function helmInstance(idx,t){const o=HELMET_OPTS[idx],g=HELM_MOD[o.slug].clone(true);
+ g.traverse(m=>{if(!m.isMesh)return;m.frustumCulled=false;m.castShadow=detail>1;
+  if(helmShell(o.slug,m.name)){const arr=Array.isArray(m.material),ms=(arr?m.material:[m.material]).map(q=>{const c=q.clone();c.map=null;c.color=col(t.helmet);return c;});m.material=arr?ms:ms[0];}});
+ return g;}
 /* mod: per-part material treatment for the replacement player model - its own helmet, visor,
    pads and jersey meshes take the team colours directly (no mocap-suit texture surgery).
    Bodymat keeps the model's embedded body texture; referees get a black kit. */
 function modPartMat(meshName,q,c,t,home,ref){const jerC=ref?'#111111':home?t.c1:t.away,pantsC=ref?'#111111':t.pants;
  if(q.name==='Bodymat'){c.color=col('#ffffff');return c;}
+ /* phase 3: Body_2's Fabric-Silk slot is the figure's whole right arm and its
+    Fabric-Linen slot a few arm/shoulder patches - both carry UVs into the same
+    body-skin atlas as Bodymat (census + UV sampling, MOD_NOTES phase 3), but
+    their FBX materials have no texture of their own. Give them the body
+    texture so they read as skin like the rest of the body; if the texture is
+    unavailable, fall through to the flat mapping below. */
+ if(meshName==='Body_2'&&(q.name==='Fabric-Silk'||q.name==='Fabric-Linen')&&CH.tex){c.map=CH.tex;c.color=col('#ffffff');return c;}
  c.map=null;
- if(meshName==='helmet_1')c.color=col(t.helmet);
+ /* phase 3: 'covers' is not shoulder pads - it is a padded shell that wraps
+    the helmet (a helmet cover; it occupies the helmet's space in the source
+    model), so it takes the helmet colour and the head reads as one kitted
+    helmet. This model has no shoulder-pad mesh. */
+ if(meshName==='helmet_1'||meshName==='covers')c.color=col(t.helmet);
  else if(meshName==='Loft'){c.color=col('#101318');c.transparent=true;c.opacity=.85;}
  else if(meshName==='Body_3_2')c.color=col(pantsC);
- else if(meshName==='covers')c.color=col('#e9e9e9');
  else if(meshName==='shoes')c.color=col('#17181c');
  else c.color=col(jerC);
  return c;}
@@ -1110,12 +1143,14 @@ function mkSkinned(e,t,home,parent,ltex){const g_=mkGeo(),p=e.rp,ref=!!p.ref,g=p
  const obj=T.SkeletonUtils.clone(CH.obj),tx=CH.hasHelmet?null:teamTex(jer),root=new T.Group(),flip=new T.Group();flip.rotation.y=Math.PI;root.add(flip);flip.add(obj);const ht=(p.ht||73)/36,sc=ht/CH.h;
  if(CH.hasHelmet){const D=Art.dims(p);applyProps(obj,D);const ps=sc/(D.raw/PROP_RAW0);obj.scale.set(ps*D.ws,ps,ps*D.ws);}else obj.scale.setScalar(sc);
  obj.position.set(0,0,0);
- obj.traverse(m=>{if(!m.isMesh)return;m.frustumCulled=false;m.castShadow=detail>1;if(!ref&&/hat/i.test(m.name||'')){m.visible=false;return;}const arr=Array.isArray(m.material),ms=(arr?m.material:[m.material]).map(q=>{const c=q.clone();if(CH.hasHelmet){c.skinning=true;return modPartMat(m.name,q,c,t,home,ref);}if(CH.tex&&q.map&&q.map===CH.tex)c.map=tx;else if(!CH.tex)c.color=col(/joint/i.test(q.name||'')?(ref?'#111111':home?t.c2:t.c1):jer);if(/reflect/i.test(q.name||''))c.color=col(jer);c.skinning=true;return c;});m.material=arr?ms:ms[0];});
+ const hIdx=CH.hasHelmet&&!ref?helmIdx(p):0,hTpl=hIdx?helmGet(hIdx):null,hOn=!!hTpl;
+ obj.traverse(m=>{if(!m.isMesh)return;m.frustumCulled=false;m.castShadow=detail>1;if(hOn&&(m.name==='helmet_1'||m.name==='covers'||m.name==='Loft')){m.visible=false;return;}if(!ref&&/hat/i.test(m.name||'')){m.visible=false;return;}const arr=Array.isArray(m.material),ms=(arr?m.material:[m.material]).map(q=>{const c=q.clone();if(CH.hasHelmet){c.skinning=true;return modPartMat(m.name,q,c,t,home,ref);}if(CH.tex&&q.map&&q.map===CH.tex)c.map=tx;else if(!CH.tex)c.color=col(/joint/i.test(q.name||'')?(ref?'#111111':home?t.c2:t.c1):jer);if(/reflect/i.test(q.name||''))c.color=col(jer);c.skinning=true;return c;});m.material=arr?ms:ms[0];});
  const head=obj.getObjectByName('mixamorigHead'),chest=obj.getObjectByName('mixamorigSpine2'),hand=obj.getObjectByName('mixamorigRightHand');
  if(!ref&&head){const hg=new T.Group();hg.scale.setScalar(YD*1.02);hg.rotation.y=Math.PI;hg.position.set(0,9.5,1.5);head.add(hg);
   if(!CH.hasHelmet){bake(helmetParts(t,g,line,detail>0,null),1,hg);
   if(g.v)mesh(g_.visor,new T.MeshPhongMaterial({color:0x0b0e14,transparent:true,opacity:.88,side:T.DoubleSide,shininess:120}),0,-.03,-.03,hg).scale.setScalar(.86);}
-  if(ltex){const dm=new T.MeshLambertMaterial({map:ltex,transparent:true});for(const sd of [-1,1]){const d=mesh(g_.decal,dm,sd*(CH.hasHelmet?.127:.152),.015,0,hg);d.rotation.y=sd*Math.PI/2;d.scale.setScalar(.82);}}}
+  if(ltex&&!hOn){const dm=new T.MeshLambertMaterial({map:ltex,transparent:true});for(const sd of [-1,1]){const d=mesh(g_.decal,dm,sd*(CH.hasHelmet?.127:.152),.015,0,hg);d.rotation.y=sd*Math.PI/2;d.scale.setScalar(.82);}}}
+ if(hOn&&head){const hg2=helmInstance(hIdx,t);root.updateMatrixWorld(true);hg2.updateMatrix();const L=new T.Matrix4().getInverse(head.matrixWorld).multiply(obj.matrixWorld).multiply(hg2.matrix);hg2.matrixAutoUpdate=false;hg2.matrix.copy(L);head.add(hg2);}
  if(!ref&&chest){const ng=new T.Group();ng.scale.set(YD*.8,YD*.8,YD*.6);ng.rotation.y=Math.PI;ng.position.set(0,1,0);chest.add(ng);const nt=new T.MeshLambertMaterial({map:numTex(p.num,numC),transparent:true});mesh(g_.num,nt,0,0,0,ng);mesh(g_.numB,nt,0,0,0,ng);}
  const B={root,skinned:true,obj,hand,mix:new T.AnimationMixer(obj),acts:{},cur:'',curA:null,t,ti:e.team,hs:1,carryY:ht*.6,qbY:ht*.75,top:ht*1.04,j:[],ph0:Math.random()*6};
  for(const k in CH.clips)B.acts[k]=B.mix.clipAction(CH.clips[k]);
@@ -1523,7 +1558,7 @@ function playerModal(){if(view.pid==null)return'';const t=editTeam(),p=findP(t,v
  ${BODY.map(([k,n])=>{const v=Math.round(((p.b||{})[k]==null?1:p.b[k])*100);return `<div class="sl"><span>${n}</span><input type="range" min="50" max="160" value="${v}" data-c="pbody" data-k="${k}"><b id="pb_${k}">${v}%</b></div>`;}).join('')}
  <p class="dim">Each slider is relative to an average build; the figure is then scaled so the player stands exactly the chosen height. This changes how the player looks in games, not their ratings.</p>
  <label>Skin tone</label><div class="row">${Art.SKIN.map((c,i)=>`<button class="sw${p.sk===i?' on':''}" style="background:${c}" data-a="pskin" data-v="${i}"></button>`).join('')}</div>
- <h3>Equipment</h3>${tg('v','Visor',[[0,'None'],[1,'Dark visor']])}${tg('sl','Arm sleeves',[[0,'Bare arms'],[1,'Sleeves']])}${tg('gl','Gloves',[[0,'White'],[1,'Team color'],[2,'Black']])}${tg('cl','Cleats',[[0,'White'],[1,'Black'],[2,'Team color']])}${tg('so','Socks',[[0,'Low'],[1,'High, team color'],[2,'High, white']])}${tg('wb','Wristbands',[[0,'None'],[1,'White'],[2,'Team color']])}${tg('tw','Towel',[[0,'None'],[1,'Towel']])}${tg('bp','Back plate',[[0,'None'],[1,'Back plate']])}${tg('h','Hair',[[0,'Short'],[1,'Long, out the back']])}
+ <h3>Equipment</h3>${tg('helm','Helmet',[[0,'Stock'],[1,'Bills SpeedFlex'],[2,'Midnight Navy'],[3,'SpeedFlex Style'],[4,'Ridged Classic']])}${tg('v','Visor',[[0,'None'],[1,'Dark visor']])}${tg('sl','Arm sleeves',[[0,'Bare arms'],[1,'Sleeves']])}${tg('gl','Gloves',[[0,'White'],[1,'Team color'],[2,'Black']])}${tg('cl','Cleats',[[0,'White'],[1,'Black'],[2,'Team color']])}${tg('so','Socks',[[0,'Low'],[1,'High, team color'],[2,'High, white']])}${tg('wb','Wristbands',[[0,'None'],[1,'White'],[2,'Team color']])}${tg('tw','Towel',[[0,'None'],[1,'Towel']])}${tg('bp','Back plate',[[0,'None'],[1,'Back plate']])}${tg('h','Hair',[[0,'Short'],[1,'Long, out the back']])}
  <h3>Ratings</h3>${E.ATTR.map(a=>`<div class="sl${E.KEY[p.pos][a]?' key':''}"><span>${E.ATTRN[a]}</span><input type="range" min="20" max="99" value="${p.a[a]}" data-c="pattr" data-k="${a}"><b id="pa_${a}">${p.a[a]}</b></div>`).join('')}
  <div class="row"><button class="chip danger" data-a="prelease">Release player</button></div></div></div></div>`;}
 
