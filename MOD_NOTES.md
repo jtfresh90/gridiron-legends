@@ -561,3 +561,306 @@ nothing is fetched for players who stay on Stock.
   remains the visual gate, especially helmet seating at extreme proportion
   edits (the math compensates bind pose exactly; very large head sizes
   scale the helmet with the head, by design).
+
+---
+
+## Phase 5 — Joshua's phase-4 play-test fix pass
+
+Driven by Joshua's play-test verdicts on the live phase-4 build. Every item
+was diagnosed from code/data before any fix; where the cause sits in the
+original game logic rather than the mod layer, that is stated with the
+evidence. Verification is the node rig in `phase5_work/tests/` (real
+extracted Art/V/E/G code, real three r128, real model data):
+**47/47 V-module tests, 29/29 stadium tests, sim checks pass**; all 5
+script blocks pass `node --check`. `original/` untouched.
+
+### A1. All imported helmets recoloured by the game (Joshua override)
+
+- **Change of direction:** phase 4 preserved the Bills livery and the
+  Midnight Navy texture by Joshua's then-decision; he reversed it after
+  play-testing. `helmShell` now also returns true for the Bills shell-bearing
+  parts (`shell`, `jaw_pieces`, `side_panels`, `inner_shell`, `front_piece`)
+  and for all three football_helmet_2 parts (`shell`, `facemask`,
+  `cage_frame`). Recolour = the existing phase-4 mechanism: clone the
+  material, `map=null`, colour = team helmet colour. So the Bills livery is
+  dropped, and the Navy's 4096² BaseColor texture is dropped (per Joshua:
+  "the Midnight Navy must be coloured too"). Bills `hardware` and the small
+  parts keep their staged colours. football_helmet `shell` and helmet
+  `shell`/`shell_strips` were already team-coloured in phase 4.
+- **Verification:** per-helmet material assertions through the real
+  `mkBody`/`helmInstance` flow (colour == team helmet colour, map null;
+  hardware/facemask controls unchanged).
+
+### A2. Logo decals on all helmets, bent flat onto each shell
+
+- **Root cause of "logos float":** phase 4 put flat `CircleGeometry` decals
+  only on the stock shell, at ±0.127 in the head-bone group — a plane tangent
+  to a curved shell; its rim floated up to ~0.012–0.03 (game units) off the
+  surface, and imports got no decals at all (phase-4 honest flag).
+- **Fix:** `decalPatch()` builds a disc (16 segments × 3 rings) bent around
+  the shell's measured centre of curvature, with a vertical taper term for
+  the dome rolling over the top. Parameters were **measured per shell** by
+  raycasting the actual geometry from the head centre in Blender (first-hit
+  surface distances at the decal band, circle fits with residuals
+  ≤ 0.0055 game units): stock (hg frame) centre (±0.0116, −0.0389), R 0.1221;
+  per-import centres/radii/anchors are tabled in `HELM_DECAL`
+  (template-local units). Clearance 0.004–0.006 so nothing sinks.
+  Orientation (which way the logo's right edge points) matches the phase-4
+  flat decals on both sides.
+- **Verification:** patches present (2 per helmet) for stock + all four
+  imports through the real build flow; patch-to-shell median gap measured
+  in the harness: bills 0.0104/0.0124, navy 0.0074/0.0075, SpeedFlex Style
+  0.0064, Ridged Classic 0.0065 (game units, vs the flat decal's float).
+  The non-mocap fallback path keeps the original flat decal, unchanged.
+
+### A3. SpeedFlex Style "hole through the helmet with the head"
+
+- **Diagnosis (Blender, staged FBX vs the shipped character):** the shell
+  is nearly closed — head-containment raycasts: 6,424/6,463 head samples
+  covered; the only open band is the face opening (bottom-front,
+  z < ~1.50), which is the design. No head vertex pokes through the shell
+  on ANY of the five shells (corrected raycast test; pokes found were
+  shoulder vertices below the rim line). The visible see-through slot is
+  the model's **`visor` object**: measured bbox y −0.118..−0.022,
+  z 1.646..1.744 (character space) — it sits in the BROW band above the
+  face opening, not over the eyes, and staging had recoloured it
+  transparent smoke (alpha 0.6) on a guess (census flag (a)). Through it,
+  the forehead shows — reading exactly as "a hole going through it with
+  the head".
+- **Fix:** in `helmInstance`, football_helmet's `visor` is forced opaque
+  (`transparent=false, opacity=1`, dark #23262b) — a brow panel, which is
+  what the geometry is. Shell geometry and placement untouched; Ridged
+  Classic untouched, as instructed.
+- **Verification:** material assertions in the rig (transparent false,
+  opacity 1); placement code paths unchanged for all helmets.
+
+### B4. Proportions (limbs) not applying — ALL players, not just the QB
+
+Joshua's correction stood: the bug hits every player he edits, so phase
+2's approach was audited end-to-end instead of patched at the QB.
+
+- **Audit (real game paths, not the phase-2 stub rig):** the entire V
+  module body was executed in node with the real libraries and data, and
+  every link was measured: (1) the editor writes `p.b` correctly (slider
+  handler, preset buttons, Save & Play persistence — `pack()` is a generic
+  JSON transform, `p.b` survives); (2) `people()`/`sync()`/`preview()` all
+  route through the same `mkBody → mkSkinned`; the body cache is keyed by
+  entity and rebuilt on every `V.build`, and the editor preview cache key
+  includes `p.b`; (3) `Art.dims` factors reach `applyProps`; (4) the
+  shipped character FBX parses to **328 bones — eight nested same-name
+  copies of each of the 41 bones**; the real rest offsets live only on the
+  layer-0 copies, which are exactly the `getObjectByName` first matches
+  `applyProps` edits, and each skinned mesh's skeleton uses a different
+  zero-offset layer, so scaling layer-0 offsets moves every layer;
+  (5) the mixer does not stomp rest offsets (positions bit-identical
+  before/after 10 updates), and skinned vertices demonstrably move
+  (0.36+ units) when edited.
+- **Honest result:** in a faithful reproduction the proportions **do**
+  apply — edited/preview/live segment ratios match the phase-2 design
+  values (thigh 1.184 predicted, 1.168 measured mid-pose; the uniform
+  0.986 factor is the head-size factor entering the height
+  renormalisation). No code-level loss exists anywhere in the chain that
+  could be reproduced headlessly; the on-device neutralisation could not
+  be reproduced in this environment (no GPU/browser — the standing
+  headless limit), so no speculative rewrite was shipped.
+- **Fix (hardening, per the mandate):** the application point itself was
+  made immune to the whole class of one-time loss. `mkSkinned` now
+  captures the mapped bones' REST offsets before `applyProps` (only when
+  some factor ≠ 1), stores them on the body (`B.prop`), and `animate()`
+  **re-asserts rest × factor after every mixer update**, plus the
+  head/hand scales. If anything anywhere (clone timing, bind state, mixer
+  internals, a future three version) resets the bones, the next frame
+  restores the edit. Default builds keep `B.prop === null` and the exact
+  phase-4 path (zero per-frame cost).
+- **Verification:** real-flow ratio tests (pre-snap and live) **plus** a
+  stomp test: after building an edited body, all mapped bone positions
+  and the head scale are forcibly reset to the unedited build's, then 10
+  `pose` frames run — the segment ratios return to the design values.
+  Joshua's phone remains the acceptance gate for the on-device behaviour.
+
+### B5. Jersey numbers flush on this model
+
+- **Measurement:** in the real `mkSkinned` flow (bind pose), nearest-
+  surface distances from the number arcs to the chest (shirt + Body_2
+  skinned vertices, torso band): front median 0.0098 (centre 0.0060, edges
+  0.0145 — arc too curved and floating), back median 0.0232, p95 0.0437
+  (arc too flat and far out; centre floated 0.0431). The arcs were stock
+  placements fitted to the mocap suit's chest; this model's chest differs.
+  (The skinned path has no nameplate — that exists only on the procedural
+  fallback body, which keeps its stock fit.)
+- **Fix:** per-mesh scale + offset inside the number group (shared
+  geometry untouched, so the procedural body is unaffected): front
+  scale 0.90, offset (0.007, 0, −0.035); back scale 0.91, offset
+  (0.021, 0, −0.035) — offsets in number-group units.
+- **Verification:** refit harness numbers — front min/median/p95
+  0.0027/0.0060/0.0096, back 0.0034/0.0064/0.0144 (nothing sunk anywhere;
+  back digits at 91% width, the cost of matching the back's curvature —
+  the 0.70-scale alternative fit marginally better but visibly squeezed
+  the digits, and was rejected).
+
+### C6. DBs falling before the snap
+
+- **Root cause (original clip content + selection logic, measured):**
+  `animate()` hard-wires pre-snap CB/S/LB to the `def` clip regardless of
+  velocity. The `def` clip (defender.js) is a falling-down performance:
+  sampled on this skeleton, hips height 96 → 14 (FBX units) and spine
+  pitch → 94°, ending flat on the ground at ~1.8 s of a 3.6 s clip that
+  then LOOPS — stand, collapse, lie, pop up, repeat. (The falling_down/
+  getting_up clips are indeed unbound on this model, but they were never
+  the pre-snap mechanism; the game doesn't use them here. The `stance`
+  clip does pitch to 107° but its hips stay at 69 — a plausible
+  three-point stance — left alone. The `catch` clip also ends falling;
+  noted, out of scope.)
+- **Fix:** after `fixClip`, the `def` clip is trimmed to its first 1.0 s
+  (the upright ready crouch: hips 96 → ~80, pitch ≤ ~40°), and
+  `mkSkinned` sets the `def` action to `LoopPingPong` so the loop has no
+  pop. Live-play uses of `def` (coverage, engagement) get the same
+  trimmed clip — strictly better there too.
+- **Verification:** clip duration == 1.0; sampled hips minimum over two
+  full ping-pong cycles > 55 FBX units (never near the ground); action
+  loop mode asserted in the rig.
+
+### C7. Tackling looks weird
+
+- **Diagnosis (measured):** the tackle clip's drive/wrap phase is
+  0–~1.2 s of its 3.6 s (spine pitch 39° → 67°); by 50% the tackler is
+  already horizontal (pitch 84°). `animate()` started the clip at
+  `SKIP.tackle = .5` — i.e. tackles began mid-fall, already flat: the
+  "instant ragdoll" look. (`SKIP.fall = .4` was checked and is correct:
+  the fall clip's hips spike upward to 385 until ~34%.) Separately, the
+  sim ends a successful tackle instantly (carrier down + 1.4 s stun)
+  while the clip needs ~1.2 s to arrive — a contact-timing mismatch in
+  the original game logic that the clip retargeting residual (Nov 10:
+  tackle/falling_down/getting_up need a true retargeting pass) also
+  feeds; that part is **not** fixed here and is stated plainly.
+- **Fix:** `SKIP.tackle` .5 → .08 (starts at the drive). One constant.
+- **Verification:** sampled spine pitch at the new start = 23° (vs 77° at
+  the old start) in the rig.
+
+### C8. Blocking "terrible and not working"
+
+- **Investigation (headless sim of the real E+G code, diff=1 — an early
+  run without `diff` produced NaN mover speeds and was discarded; the
+  real UI always sets `diff`):** the blocking SYSTEM works as designed —
+  `assignBlocks` matches all 4 DL with a spare blocker left over on
+  20/20 sampled plays, engagements happen on every play, engaged rushers
+  are slowed to ×0.06 speed. The sim never references the player model,
+  so this is **pre-existing game logic, independent of the model swap**.
+  What fails the user is the pocket clock: the shed formula's base rate
+  .075 (with a shallow .011 slope) frees each rusher in ~13 s *regardless
+  of the ratings matchup*, so with 4 rushers the first man is free in
+  ~2.8 s and a statue QB was sacked 20/20 at a median ~2.5 s — downfield
+  routes (3–4 s) are unthrowable, which reads as "blocking not working".
+- **Fix (one formula, contained):** shed rate base .075 → .06, slope
+  .011 → .002, clamp [.03,.5] → [.025,.4]. Even matchup ≈ 17 s per
+  rusher (first shed ~4 s), dominant OL ~33 s, badly overmatched ~11 s;
+  run-play ×1.25 and double-team ÷2.5 multipliers unchanged.
+- **Verification:** statue-QB sims across three roster draws: median
+  sack 5.73 / 3.23 / 3.47 s (draw-dependent because blitz frequency
+  varies; p75 5.5–8.9 s vs ~3.7 s pre-fix), with 40–50% of pockets
+  holding ≥ 4.5 s. Unblocked blitzers still arrive in ~1.7 s — that is
+  the game's defensive design (throw hot or keep a back in), not the
+  shed clock. Full CPU-vs-CPU games complete with sane scores
+  (27–20, 20–41, 23–27).
+
+### D9. Weird poles in the stands (all stadium kinds)
+
+- **Root cause (phase-2 code, in the COMMON construction):** `stand()` —
+  used for every side, corner and cheek in every variant — draws its
+  aisle slats as `BoxGeometry(.9, .08, sl)`: the long axis (slope length
+  `sl`) on Z. But the slat is rotated like the deck plane
+  (−(π/2 − ang) about X), which maps the box's long axis onto the slope
+  **normal** — so each aisle stands straight up out of the crowd slope,
+  up to `sl`/2 ≈ 18 units on big decks, every 15 units of stand length.
+  The crowd code even skips people at those columns (they were meant to
+  be flat aisles). Floodlight pylons and jumbotron posts were checked
+  against every footprint including upper decks/corners — all outside
+  the stands; not the cause.
+- **Fix:** geometry swapped to `BoxGeometry(.9, sl, .08)` — same centre,
+  same rotation; the long axis now lies along the slope.
+- **Verification:** scene census on real `build()` output (sizes 1/2/4):
+  26–66 aisle slats present per stadium, zero pole-oriented.
+
+### D10. Dome doesn't wrap at larger sizes
+
+- **Root cause (measured against the real `build()`):** the dome was a
+  hemisphere sized from the FIELD (`max(L,W)*1.35`, height ×0.46) centred
+  at −L/2. At NFL size 3 its height over the stand corners (≈30.3) was
+  below the stand tops (≈32.2) — poke-through; at size 4 the footprint
+  corners fell outside the dome circle entirely. An ellipsoid fitted to
+  the footprint sides still leaves the corners at q=1.36 (measured), and
+  the freestanding video board stood at the rim with its top at
+  topY+13.75, outside any sane roof.
+- **Fix:** the dome is now an **extrusion of the footprint itself** — a
+  rounded-rectangle curtain wall on the phase-2 footprint extents
+  (+10 margin) rising to H0 = topY+13 (above every stand wall, press box
+  and the light ring at topY+12), with a bevelled roof plateau at
+  RY = topY+20. It wraps by construction at every size. In dome builds
+  the video board becomes a centre-hung, double-sided board at midfield
+  (as in real domed stadiums) on hangers to a crossbar, replacing the
+  rim board + ground posts; open-air builds keep the north board
+  unchanged.
+- **Verification:** sweep of size 1–4 × pro/college/cfl through the real
+  `build()`: every mesh's topmost vertices sit under the computed roof
+  surface with ≥ 2.5 units of clearance everywhere (worst margin
+  −2.55). Sizes 1–2 behaviour preserved (they contained before, they
+  contain now).
+
+### E11. Performance ("gameplay slow", "animations slow the game")
+
+Targeted changes, no visual or gameplay changes except the sanctioned
+pixel-ratio cap:
+
+- **Pixel ratio cap 2 → 1.5** (init + resize): fragment cost scales with
+  the square — (1.5/2)² = 56% of the pixels on hi-dpi phones. This is
+  the one rendering-resolution change, flagged explicitly.
+- **Far-body mixer LOD:** bodies more than 60 (Manhattan) units from the
+  ball now update their animation mixer at 30 Hz with accumulated dt
+  instead of every frame; root position/rotation still update every
+  frame, so movement is unaffected — only distant skeletal poses tick
+  at half rate. Near bodies untouched.
+- **Paused dt=0 skip:** a dt of 0 (pause menu, first frame) no longer
+  runs every body's mixer for a guaranteed no-op.
+- Not changed (structural, reported honestly): ~90k triangles per
+  skinned player × ~25 bodies × shadow pass is the floor cost of the
+  phase-1 model; reducing it means re-meshing, which is out of scope.
+  Expected gain mechanism: roughly half the mixer CPU for far players,
+  ~44% fewer fragment pixels, zero mixer cost while paused. No FPS
+  number is claimed — Joshua's phone is the measuring instrument.
+
+### F. Remaining player properties & equipment (Edit Player audit)
+
+Audited the editor against what the replacement model actually has
+(`p.g` options vs the model's meshes/material slots):
+
+- **Wired — Visor (g.v) → the model's Loft:** phase 4 rendered the Loft
+  (the model's visor) for everyone on the stock path, so Visor=None was
+  a dead option on this model. It now hides/shows the Loft. Behaviour
+  note: players whose record says no visor no longer display one —
+  generated rosters roll visor ownership at 25%, and those players now
+  render as generated (the game's own intent).
+- **Wired — Cleats (g.cl) → shoes colour:** 0 white, 1 black (phase-4
+  default), 2 team primary. The option previously changed nothing on
+  this model.
+- **Wired — Socks (g.so) → Body_2 'Default' slot** (the body atlas's
+  lower-leg band): 0 skin (body texture), 1 team colour (phase-4
+  default), 2 white.
+- **Not added, with reasons:** sleeves — Body_2's fabric slots are
+  asymmetric (Fabric-Silk = the entire right arm, Fabric-Linen =
+  patches on the left), so a sleeve colour would give one full sleeve
+  and one partial; gloves — the hands live inside the shared Bodymat
+  slot with the face/torso skin, no hand-only slot exists; wristbands,
+  towel, back plate, hair — no such geometry or material slot exists
+  in the model. Adding any of these needs new modelled parts, not
+  editor wiring.
+- Already editable and working (no change): helmet (phase 4 + A1/A2),
+  jersey/pants colours, skin tone, numbers, proportions (B4).
+
+### Process note
+
+Midway through this pass the VM restarted, wiping the /dev/shm working
+copy and the phase-2 test rig. Everything was rebuilt — rig first,
+calibrated against the phase-2 verified ratios on the pristine file
+(1.168/0.949/1.022 reproduced exactly) — and the edits re-applied; the
+final measurements are bit-identical to the pre-restart run. The tests
+and rig now live in `phase5_work/` so they persist.
