@@ -89,6 +89,7 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
 <div id="app"></div><div id="toast"></div><input type="file" id="fi" hidden>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/GLTFExporter.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/FBXLoader.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/utils/SkeletonUtils.js"></script>
@@ -739,7 +740,7 @@ function live(dt){
  // engagement
  const car=b.carrier,runPlay=car&&!(car===pl.qb&&pl.type==='pass'&&!pl.scramble);S.runPlay=runPlay;
  for(const e of S.ents){const o=e.blk;if(!o||e.down||e.stun>0||o.down||o.shedT>0)continue;if(hyp(o.x-e.x,o.z-e.z)<1.3){o.engN++;if(!o.eng)o.eng=e;}}
- for(const o of S.ents){const e=o.eng;if(!e)continue;const oa=o.rp.a;let rate=clamp(.06+(oa.str*.5+oa.spd*.2+oa.tkl*.3-e.rp.a.blk)*.002,.025,.4)*(runPlay?1.25:1)/(o.engN>1?2.5:1); /* phase 5 (C8): shed clock retuned - headless sims of the shipped formula had a statue QB sacked in a median ~2.5 s (20/20) because the .075 base rate freed a rusher in ~13 s no matter the matchup, x4 rushers. New base/slope: even matchup ~17 s per rusher (first shed ~4 s), dominant OL ~33 s, overmatched ~11 s. Assignment/engagement logic itself verified working - see MOD_NOTES 5. */
+ for(const o of S.ents){const e=o.eng;if(!e)continue;const oa=o.rp.a;let rate=clamp(.075+(oa.str*.5+oa.spd*.2+oa.tkl*.3-e.rp.a.blk)*.011,.03,.5)*(runPlay?1.25:1)/(o.engN>1?2.5:1);
   if(pl.isKick)rate*=2.5;if(R()<rate*dt){o.shedT=1.3;e.stun=.45;o.eng=null;}else if(runPlay&&car){const dx=o.x-car.x,dz=o.z-car.z,d=hyp(dx,dz)||1,p=clamp(.5+(e.rp.a.blk-oa.str)*.02,0,1.2)*dt;o.x+=dx/d*p;o.z+=dz/d*p;}}
  // tackles
  if(car&&b.state==='held'&&!(pl.isKick&&!pl.kicked)){
@@ -865,7 +866,7 @@ function ui(){if(!S)return{};const b=S.ball,pl=S.play,u=S.userEnt,o={action:'',s
  if(S.phase==='live'&&b.state==='air'&&b.kind==='kick'&&S.poss!==UT&&UT>=0&&!RU.rouge&&!pl.onside&&!pl.fair)o.action='FAIR CATCH';
  o.aud=S.phase==='pre'&&UT>=0&&pl&&!pl.isKick&&pl.type!=='kneel';o.pc=S.phase==='pre'&&S.auto==null&&pl&&!pl.isKick&&!S.tryPlay?Math.max(0,Math.ceil(pclk()-S.t)):null;o.to=S.to;
  return o;}
-function situation(){if(!S)return'';if(S.tryPlay)return'TRY';if(S.phase==='over')return'FINAL';const pl=S.play;if(pl&&pl.type==='kickoff')return'KICKOFF';
+function situation(){if(!S)return'';if(S.tryPlay)return'TRY';if(S.phase==='over')return'FINAL';const pl=S.play;if((pl&&pl.type==='kickoff')||!(S.down>=1))return'KICKOFF';
  const y=ytg(S.poss,S.los),goal=(S.fdz-(DIR[S.poss]>0?RU.L:0))*DIR[S.poss]>=0;return ['1ST','2ND','3RD','4TH'][S.down-1]+' & '+(goal?'GOAL':Math.max(1,Math.round(S.toGo)))+' · '+(y>RU.L/2?TM[S.poss].abbr+' '+Math.round(RU.L-y):y===RU.L/2?'MIDFIELD':TM[1-S.poss].abbr+' '+Math.round(y));}
 return {start,update,simToEnd,ui,situation,refToss:()=>refSig([0],'throw',1),preview,art,vd:()=>S?S.vd:1,setDefCam:v=>{if(C)C.defCam=v;},tossScene,setOpenKick:k=>{S.openKick=k;},highlights,replayState,audible,audMenu:()=>S.poss===UT?OPLAYS:DPLAYS,input,result,state:()=>S,cfg:()=>C,rules:()=>RU,teams:()=>TM,DIR,user:()=>UT,OPLAYS,DPLAYS,postZ:t=>postZ(t)};
 })();
@@ -966,14 +967,15 @@ return {get,ready,logo,logoURL,field,kit,cover,dims,figure,shade,lum,SKIN,APRON,
 
 </script>
 <script>
+
 'use strict';
 /* three.js renderer for the on-field game. Game coords (x east, z north) map to three (x, y up, -z). */
 const V=(()=>{
 let T,ren,scene,cam,cv,ok=false,bodies=new Map(),mats={},geo=null,ballM,ring,losM,fdM,labels=[],jumbo=null,jKey='',wx=null,lastLine=-1e9,helmets=[null,null],logoTex=[null,null],time=0,detail=2,camMode='std',sun=null,crowd=[],excite=0,ribbon=null,mVC=null,mVCs=null,dims=null,coin=null,lastVd=1,artM=null,artId=-1,flagM=null,spKey='';
 const cp={x:0,y:14,z:30},cl={x:0,y:1,z:0},CAMS={std:1,zoom:.78,wide:1.4};
 function init(canvas){cv=canvas;T=window.THREE;if(!T)return false;try{ren=new T.WebGLRenderer({canvas,antialias:true,powerPreference:'high-performance'});}catch(e){return false;}
- ren.setPixelRatio(Math.min(window.devicePixelRatio||1,1.5));ren.outputEncoding=T.sRGBEncoding;cam=new T.PerspectiveCamera(50,1,.4,1400);ok=true;resize();loadChar();return true;}
-function resize(){if(!ok)return;ren.setPixelRatio(Math.min(window.devicePixelRatio||1,1.5)); /* phase 5 (E11): cap 1.5 - (1.5/2)^2 = 56% of the fragment cost at cap 2 on hi-dpi phones */const w=cv.clientWidth||window.innerWidth,h=cv.clientHeight||window.innerHeight;ren.setSize(w,h,false);cam.aspect=w/h;cam.fov=cam.aspect<1?74:50;cam.updateProjectionMatrix();}
+ ren.setPixelRatio(Math.min(window.devicePixelRatio||1,2));ren.outputEncoding=T.sRGBEncoding;cam=new T.PerspectiveCamera(50,1,.4,1400);ok=true;resize();loadChar();return true;}
+function resize(){if(!ok)return;ren.setPixelRatio(Math.min(window.devicePixelRatio||1,2));const w=cv.clientWidth||window.innerWidth,h=cv.clientHeight||window.innerHeight;ren.setSize(w,h,false);cam.aspect=w/h;cam.fov=cam.aspect<1?74:50;cam.updateProjectionMatrix();}
 const col=c=>{const k=new T.Color(c);if(k.convertSRGBToLinear)k.convertSRGBToLinear();return k;};
 function mat(color,o){const k=color+(o?JSON.stringify(o):'');return mats[k]||(mats[k]=new T.MeshLambertMaterial(Object.assign({color:col(color)},o||{})));}
 function tex(canvas){const t=new T.CanvasTexture(canvas);t.encoding=T.sRGBEncoding;t.anisotropy=ren.capabilities.getMaxAnisotropy?Math.min(8,ren.capabilities.getMaxAnisotropy()):1;return t;}
@@ -1065,14 +1067,8 @@ function hipTrack(c){return c.tracks.find(t=>t.name==='mixamorigHips.position');
 function fixClip(c,k){const tr=[];for(const t of c.tracks){const i=t.name.lastIndexOf('.'),node=t.name.slice(0,i),prop=t.name.slice(i+1);if(node.indexOf('mixamorig')!==0||prop==='scale')continue;if(CH.boneSet&&!CH.boneSet[node.replace(/:/g,'')])continue;if(prop==='position'){if(node!=='mixamorigHips')continue;const v=t.values;for(let j=0;j<v.length;j+=3){v[j]=0;v[j+1]*=k;v[j+2]=0;}}tr.push(t);}c.tracks=tr;return c;}
 function getModel(L_,name,ok,bad){const sc=document.createElement('script');sc.src='models/'+name+'.js';sc.onerror=()=>{CH.st='could not download models/'+name+'.js';bad();};sc.onload=()=>{try{const b=(window.GLM||{})[name];if(!b){CH.st='models/'+name+'.js loaded but was empty';return bad();}const bin=atob(b),u=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);delete window.GLM[name];const o=L_.parse(u.buffer,'');CH.n++;if(!CH.ready)CH.st='loading '+CH.n+' of 17';ok(o);}catch(e){CH.st='error reading '+name+': '+(e&&e.message||e);bad();}};document.head.appendChild(sc);}
 function loadChar(){if(CH.loading||CH.ready)return;if(!T.FBXLoader||!T.SkeletonUtils||!window.fflate){CH.st='loader scripts missing: '+(!T.FBXLoader?'FBXLoader ':'')+(!T.SkeletonUtils?'SkeletonUtils ':'')+(!window.fflate?'fflate':'');return;}CH.loading=true;CH.st='loading character';let L_;try{L_=new T.FBXLoader();}catch(e){CH.st='error: '+e.message;return;}
- getModel(L_,'character',o=>{try{CH.obj=o;const hip=o.getObjectByName('mixamorigHips');if(hip&&hip.position.y>20)CH.hipY=hip.position.y;CH.h=CH.hipY*1.76;CH.hasHelmet=false;CH.boneSet={};o.traverse(m=>{if(m.name){CH.boneSet[m.name.replace(/:/g,'')]=1;if(/helmet/i.test(m.name))CH.hasHelmet=true;}});o.traverse(m=>{if(m.isMesh&&m.material){const ms=Array.isArray(m.material)?m.material:[m.material];for(const q of ms)if(q.map&&!CH.tex)CH.tex=q.map;}});
-   /* mod: 'throw' comes from CLIPS (quarterback_pass), not the character's own animation */let left=CLIPS.length;const done=()=>{if(--left>0)return;try{const id=CH.raw.idle,ht=id&&hipTrack(id[0]),kB=ht&&ht.values[1]>1?CH.hipY/ht.values[1]:.43,kM=CH.hipY/104.275;for(const k in CH.raw)CH.clips[k]=fixClip(CH.raw[k][0],CH.raw[k][1]==='b'?kB:kM);
-   /* phase 5 (C6): the 'def' clip is a full falling-down performance - measured
-      on this skeleton it drops the hips 96->14 (FBX units) and pitches to 94
-      degrees, ending flat on the ground, and animate() loops it for every
-      pre-snap CB/S/LB. That is the DBs-falling-before-the-snap bug. Keep only
-      the upright ready-crouch first second; mkSkinned ping-pongs it. */
-   if(CH.clips.def){const c=CH.clips.def;for(const t of c.tracks){const vs=t.values.length/t.times.length;let n=0;while(n<t.times.length&&t.times[n]<=1)n++;if(n>=2&&n<t.times.length){t.times=t.times.slice(0,n);t.values=t.values.slice(0,n*vs);}}c.duration=1;}if(!(CH.clips.idle&&CH.clips.run))CH.st='clips missing: '+(CH.clips.idle?'':'idle ')+(CH.clips.run?'':'run')+' | '+CH.st;if(CH.clips.idle&&CH.clips.run){let n=0;const go=()=>{const im=CH.tex&&CH.tex.image;if(!CH.tex||(im&&(im.complete===undefined||(im.complete&&im.naturalWidth)))||n++>30){CH.ready=true;CH.st='ready ('+Object.keys(CH.clips).length+' clips)';clearBodies();}else setTimeout(go,200);};go();}}catch(e){}};
+ getModel(L_,'character',o=>{try{CH.obj=o;const hip=o.getObjectByName('mixamorigHips');if(hip&&hip.position.y>20)CH.hipY=hip.position.y;CH.h=CH.hipY*1.76;CH.hasHelmet=false;CH.boneSet={};o.traverse(m=>{if(m.name){CH.boneSet[m.name.replace(/:/g,'')]=1;if(/helmet/i.test(m.name))CH.hasHelmet=true;}});o.traverse(m=>{if(m.isMesh&&m.material){const ms=Array.isArray(m.material)?m.material:[m.material];for(const q of ms)if(q.map&&!CH.tex)CH.tex=q.map;}});if(CH.hasHelmet&&!window.NOOPT){try{const A=optChar(o,2.7,{helmet_1:.8,covers:1,Loft:.5,shoes:1.6,Eyes:9,shirt:1}),Bh=optChar(o,.8);if(A&&Bh){const hb=o.getObjectByName('mixamorigHead');if(hb){o.updateMatrixWorld(true);CH.headInv=new T.Matrix4().copy(hb.matrixWorld).invert();}try{const hm=o.getObjectByName('helmet_1');if(hm&&hm.geometry&&hm.geometry.attributes.position){const pa=hm.geometry.attributes.position,mn=[1e18,1e18,1e18],mx=[-1e18,-1e18,-1e18],vv=new T.Vector3();for(let i=0;i<pa.count;i++){vv.fromBufferAttribute(pa,i);if(hm.bindMatrix)vv.applyMatrix4(hm.bindMatrix);if(vv.x<mn[0])mn[0]=vv.x;if(vv.y<mn[1])mn[1]=vv.y;if(vv.z<mn[2])mn[2]=vv.z;if(vv.x>mx[0])mx[0]=vv.x;if(vv.y>mx[1])mx[1]=vv.y;if(vv.z>mx[2])mx[2]=vv.z;}CH.headFit={mn,mx};for(const s2 in HELM_MOD){helmFitGeo(HELM_MOD[s2].lo);helmFitGeo(HELM_MOD[s2].hi);}}}catch(e){}CH.obj=A.root;CH.objHi=Bh.root;CH.numG=kitPanels(Bh.root);CH.belt=Bh.belt;CH.top=A.top;CH.opt=true;CH.nt=[A.nt,A.nv,Bh.nt,Bh.nv,A.root.children.map(c=>c.isSkinnedMesh?c.geometry.groups.map(g=>g.materialIndex+':'+g.count/3).join(' '):'').join('')];o.traverse(m=>{if(m.isMesh&&m.geometry)m.geometry.dispose();});}}catch(er){CH.opt=false;CH.st='optimizer: '+(er&&er.message||er);}}
+   /* mod: 'throw' comes from CLIPS (quarterback_pass), not the character's own animation */let left=CLIPS.length;const done=()=>{if(--left>0)return;try{const id=CH.raw.idle,ht=id&&hipTrack(id[0]),kB=ht&&ht.values[1]>1?CH.hipY/ht.values[1]:.43,kM=CH.hipY/104.275;for(const k in CH.raw)CH.clips[k]=fixClip(CH.raw[k][0],CH.raw[k][1]==='b'?kB:kM);if(!(CH.clips.idle&&CH.clips.run))CH.st='clips missing: '+(CH.clips.idle?'':'idle ')+(CH.clips.run?'':'run')+' | '+CH.st;if(CH.clips.idle&&CH.clips.run){let n=0;const go=()=>{const im=CH.tex&&CH.tex.image;if(!CH.tex||(im&&(im.complete===undefined||(im.complete&&im.naturalWidth)))||n++>30){CH.ready=true;CH.st='ready ('+Object.keys(CH.clips).length+' clips)';clearBodies();}else setTimeout(go,200);};go();}}catch(e){}};
    for(const [key,file,fam] of CLIPS)getModel(L_,file,a=>{const c=longest(a.animations);if(c)CH.raw[key]=[c,fam];done();},done);}catch(e){}},()=>{});}
 /* recolour the suit texture per team: dark suit and marker pixels take the team colour, skin, gloves and shoes are kept */
 function teamTex(color){if(CH.texC[color])return CH.texC[color];let out=CH.tex;try{const im=CH.tex.image;if(!im||(im.complete!==undefined&&!(im.complete&&im.naturalWidth)))return CH.tex;const N=1024,c=document.createElement('canvas');c.width=c.height=N;const x=c.getContext('2d');x.drawImage(im,0,0,N,N);const d=x.getImageData(0,0,N,N),a=d.data,k=new T.Color(color),R=k.r*255,G_=k.g*255,B_=k.b*255;
@@ -1087,59 +1083,47 @@ function helmetParts(t,g,line,hi,skin){const g_=mkGeo(),r=.148,PI=Math.PI,hc=t.h
    helmet's placement, so no per-helmet offsets exist anywhere. They load on
    demand through getModel; until a module lands, the stock helmet renders, and
    the load's completion rebuilds bodies so the choice appears. */
-const HELMET_OPTS=[null,
- {slug:'helmet_bills',label:'Bills SpeedFlex'},
- {slug:'helmet_football_helmet_2',label:'Midnight Navy'},
- {slug:'helmet_football_helmet',label:'SpeedFlex Style'},
- {slug:'helmet_helmet',label:'Ridged Classic'}];
-const HELM_MOD={},HELM_LOAD={};
-function helmIdx(p){const v=p&&p.g?+p.g.helm||0:0;return v>0&&v<HELMET_OPTS.length?v:0;}
-/* phase 5 (Joshua override): ALL imported shells take the team helmet colour,
-   like the stock helmet. bills: the shell-bearing parts are recoloured and the
-   Bills livery is dropped. football_helmet_2: its navy BaseColor texture is
-   dropped (map=null) and the shared material takes the team colour.
-   football_helmet / helmet were already team-coloured in phase 4. */
-function helmShell(slug,name){if(slug==='helmet_bills')return['shell','jaw_pieces','side_panels','inner_shell','front_piece'].includes(name);if(slug==='helmet_football_helmet_2')return name==='shell'||name==='facemask'||name==='cage_frame';if(slug==='helmet_football_helmet')return name==='shell';if(slug==='helmet_helmet')return name==='shell'||name==='shell_strips';return false;}
-function loadHelmMod(slug){if(HELM_MOD[slug]||HELM_LOAD[slug]||!T||!T.FBXLoader)return;HELM_LOAD[slug]=1;try{getModel(new T.FBXLoader(),slug,o=>{HELM_MOD[slug]=o;HELM_LOAD[slug]=0;clearBodies();},()=>{HELM_LOAD[slug]=0;});}catch(e){HELM_LOAD[slug]=0;}}
+const HELMET_OPTS=[null,{slug:'helmet_football_helmet',label:'Speed'},{slug:'helmet_football_helmet_2',label:'Cage'},{slug:'helmet_bills',label:'Flex'},{slug:'helmet_helmet',label:'Ridge'}];
+const HELM_MOD={},HELM_LOAD={},HELM_RX={};
+function kitOf(t){return t.kit||{};}
+function helmIdx(p,t){const g=p&&p.g?p.g.helm:null,v=g==null||g<0?(kitOf(t||{}).helm==null?1:+kitOf(t).helm):+g;return v>0&&v<HELMET_OPTS.length?v:0;}
+/* imported helmets are merged at load into one mesh with four groups - shell, facemask, visor, everything else - so every
+   one of them takes the team's shell colour, finish, facemask colour and wrapped logo, and none keeps a livery of its own */
+function helmClass(slug,mn,qn,c){if(slug==='helmet_football_helmet')return mn==='shell'?0:mn==='visor'?2:qn==='Regular_0'?1:3;if(slug==='helmet_football_helmet_2')return mn==='shell'?0:1;
+ if(slug==='helmet_bills'){if(qn==='Facemask1Mtl')return 1;if(qn==='Chinstrap1Mtl')return 3;if(mn==='side_panels'||mn==='hardware')return -1;if(mn==='shell'||mn==='front_piece')return c.r+c.g+c.b>.05?0:3;return 3;}if(slug==='helmet_helmet')return mn==='shell'||mn==='shell_strips'?0:mn==='facemask'||mn==='mask_mount'?1:3;return mn==='shell'?0:3;}
+function sideUV(P,ids,U){let y0=1e9,y1=-1e9,z0=1e9,z1=-1e9,cx=0,n=0;for(const i of ids){const y=P[i*3+1],z=P[i*3+2];if(y<y0)y0=y;if(y>y1)y1=y;if(z<z0)z0=z;if(z>z1)z1=z;cx+=P[i*3];n++;}cx/=n||1;const dy=(y1-y0)||1,dz=(z1-z0)||1;for(const i of ids){const zn=(P[i*3+2]-z0)/dz;U[i*2]=P[i*3]>cx?1-zn:zn;U[i*2+1]=(P[i*3+1]-y0)/dy;}}
+/* helmet fit: the stock helmet_1 bounding box is measured off the character at
+   load (CH.headFit, in loadChar) and every imported shell is scaled/translated
+   per axis so its class-0 (shell) box lands exactly on that box — same centre,
+   same width/depth/height the model's own helmet has on this head. */
+function helmFitBox(P,si){if(!CH.headFit||!si||!si.length)return false;const F=CH.headFit,mn=[1e18,1e18,1e18],mx=[-1e18,-1e18,-1e18],seen=new Set();for(const vi of si){if(seen.has(vi))continue;seen.add(vi);for(let a=0;a<3;a++){const q=P[vi*3+a];if(q<mn[a])mn[a]=q;if(q>mx[a])mx[a]=q;}}
+ const s=[0,1,2].map(a=>(F.mx[a]-F.mn[a])/Math.max(1e-6,mx[a]-mn[a])),c=[0,1,2].map(a=>(F.mx[a]+F.mn[a])/2-(mn[a]+mx[a])/2*s[a]);
+ for(let i=0;i+2<P.length;i+=3)for(let a=0;a<3;a++)P[i+a]=P[i+a]*s[a]+c[a];return true;}
+function helmFitGeo(g){if(!g||g.userData.fit||!CH.headFit)return;const idx=g.index,grp=(g.groups||[]).find(x=>x.materialIndex===0);if(!idx||!grp)return;const si=[];for(let i=grp.start;i<grp.start+grp.count;i++)si.push(idx.getX(i));if(helmFitBox(g.attributes.position.array,si)){g.attributes.position.needsUpdate=true;g.computeVertexNormals();g.computeBoundingSphere();g.userData.fit=1;}}
+function optHelm(o,slug,cell){o.updateMatrixWorld(true);const P=[],CN=[],C=[],tris=[[],[],[],[]],v=new T.Vector3();
+ o.traverse(m=>{if(!m.isMesh)return;const g=m.geometry,pa=g.attributes.position,ix=g.index,mats=Array.isArray(m.material)?m.material:[m.material],n=ix?ix.count:pa.count,groups=g.groups&&g.groups.length?g.groups:[{start:0,count:n,materialIndex:0}],flip=m.matrixWorld.determinant()<0;
+  for(const gr of groups){const q=mats[gr.materialIndex]||mats[0],cls=helmClass(slug,m.name,q.name||'',q.color);if(cls<0)continue;const map=new Map(),s=cell*(cls===1?.7:1),end=Math.min(n,gr.start+gr.count);let cr=q.color.r,cg=q.color.g,cb=q.color.b;if(cls===3&&cr>cg*2.5&&cr>cb*2.5){cr=cg=cb=.3;}
+   const vert=k=>{v.fromBufferAttribute(pa,k).applyMatrix4(m.matrixWorld);const key=((Math.floor(v.x/s)+512)*1024+(Math.floor(v.y/s)+512))*1024+(Math.floor(v.z/s)+512);let id=map.get(key);if(id===undefined){id=CN.length;map.set(key,id);P.push(v.x,v.y,v.z);CN.push(1);if(cls===3)C.push(cr,cg,cb);else C.push(1,1,1);}else{P[id*3]+=v.x;P[id*3+1]+=v.y;P[id*3+2]+=v.z;CN[id]++;}return id;};
+   for(let k=gr.start;k+2<end;k+=3){const a=vert(ix?ix.getX(k):k),b=vert(ix?ix.getX(k+1):k+1),c=vert(ix?ix.getX(k+2):k+2);if(a===b||b===c||a===c)continue;tris[cls].push(a,flip?c:b,flip?b:c);}}});
+ const nv=CN.length;for(let i=0;i<nv;i++){P[i*3]/=CN[i];P[i*3+1]/=CN[i];P[i*3+2]/=CN[i];}const rx=window.HRX!=null&&slug==='helmet_football_helmet'?window.HRX:(HELM_RX[slug]||0);if(rx){let y0=1e9,y1=-1e9,z0=1e9,z1=-1e9;for(let i=0;i<nv;i++){const y=P[i*3+1],z=P[i*3+2];if(y<y0)y0=y;if(y>y1)y1=y;if(z<z0)z0=z;if(z>z1)z1=z;}const cy=(y0+y1)/2,cz=(z0+z1)/2,cs=Math.cos(rx),sn=Math.sin(rx);for(let i=0;i<nv;i++){const y=P[i*3+1]-cy,z=P[i*3+2]-cz;P[i*3+1]=cy+y*cs-z*sn;P[i*3+2]=cz+y*sn+z*cs;}}const fitted=helmFitBox(P,tris[0]);const U=new Float32Array(nv*2);sideUV(P,new Set(tris[0]),U);
+ const g=new T.BufferGeometry(),index=[];for(let c=0;c<4;c++){if(tris[c].length){g.addGroup(index.length,tris[c].length,c);for(const i of tris[c])index.push(i);}}
+ g.setAttribute('position',new T.Float32BufferAttribute(P,3));g.setAttribute('uv',new T.BufferAttribute(U,2));g.setAttribute('color',new T.Float32BufferAttribute(C,3));g.setIndex(nv>65535?new T.BufferAttribute(new Uint32Array(index),1):index);g.computeVertexNormals();g.computeBoundingSphere();g.userData.keep=true;if(fitted)g.userData.fit=1;g.userData.nt=index.length/3;return g;}
+function loadHelmMod(slug){if(HELM_MOD[slug]||HELM_LOAD[slug]||!T||!T.FBXLoader)return;HELM_LOAD[slug]=1;try{getModel(new T.FBXLoader(),slug,o=>{try{HELM_MOD[slug]={lo:optHelm(o,slug,1.7),hi:optHelm(o,slug,.4)};o.traverse(m=>{if(m.isMesh&&m.geometry)m.geometry.dispose();});}catch(e){}HELM_LOAD[slug]=0;clearBodies();},()=>{HELM_LOAD[slug]=0;});}catch(e){HELM_LOAD[slug]=0;}}
 function helmGet(idx){const o=HELMET_OPTS[idx];if(!o)return null;if(!HELM_MOD[o.slug])loadHelmMod(o.slug);return HELM_MOD[o.slug]||null;}
-function helmInstance(idx,t){const o=HELMET_OPTS[idx],g=HELM_MOD[o.slug].clone(true);
- g.traverse(m=>{if(!m.isMesh)return;m.frustumCulled=false;m.castShadow=detail>1;
-  /* phase 5 (A3): football_helmet's 'visor' object sits in the brow band
-     (measured z 1.65-1.74 in character space - the front brow panel, not an
-     eye shield) and was made transparent smoke in staging on a guess; with it
-     see-through, the forehead shows through the slot above the face opening -
-     Joshua's "hole through the helmet". Make it opaque; geometry untouched. */
-  if(o.slug==='helmet_football_helmet'&&m.name==='visor'){const arr=Array.isArray(m.material),ms=(arr?m.material:[m.material]).map(q=>{const c=q.clone();c.transparent=false;c.opacity=1;c.color=col('#23262b');return c;});m.material=arr?ms:ms[0];return;}
-  if(helmShell(o.slug,m.name)){const arr=Array.isArray(m.material),ms=(arr?m.material:[m.material]).map(q=>{const c=q.clone();c.map=null;c.color=col(t.helmet);return c;});m.material=arr?ms:ms[0];}});
- return g;}
-/* phase 5 (A2): helmet logo patch bent onto the shell's measured side surface.
-   (cx,cz) = centre of curvature in the parent frame's horizontal (x,z) plane,
-   R = radius, (ax,az) = surface point at patch centre, yC = patch centre
-   height, size = patch radius, clr = clearance, sLo/sHi = the shell surface's
-   vertical taper (relative surface distance 0.04 below/above centre height).
-   Parameters measured per shell - see MOD_NOTES phase 5. */
-function decalPatch(cx,cz,R,ax,az,yC,size,clr,sLo,sHi){
- const dx0=ax-cx,dz0=az-cz,L0=Math.hypot(dx0,dz0)||1,ux=dx0/L0,uz=dz0/L0;
- const seg=16,rings=3,pos=[],nor=[],uv=[],idx=[];
- for(let r=0;r<=rings;r++)for(let s2=0;s2<=seg;s2++){
-  const ph=s2/seg*Math.PI*2,rho=r/rings,u=Math.cos(ph)*rho,v=Math.sin(ph)*rho;
-  const th=u*size/(R+clr),cs=Math.cos(th),sn=Math.sin(th);
-  const dx=ux*cs+uz*sn,dz=-ux*sn+uz*cs;
-  const sv=v>0?1+(sHi-1)*Math.min(1,v/.57):1+(sLo-1)*Math.min(1,-v/.57);
-  const rr=R*sv+clr;
-  pos.push(cx+dx*rr,yC+v*size,cz+dz*rr);nor.push(dx,0,dz);uv.push(u/2+.5,v/2+.5);}
- for(let r=0;r<rings;r++)for(let s2=0;s2<seg;s2++){const a=r*(seg+1)+s2,b=a+1,c2=a+seg+1,d=c2+1;idx.push(a,c2,b,b,c2,d);}
- const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(pos,3));g.setAttribute('normal',new T.Float32BufferAttribute(nor,3));g.setAttribute('uv',new T.Float32BufferAttribute(uv,2));g.setIndex(idx);return g;}
-/* per-shell decal parameters in template-local units (measured, MOD_NOTES 5) */
-const HELM_DECAL={
- helmet_bills:{yC:165.5,clr:.45,s:[1.06,.73],plus:{c:[-3.21,3.25],R:11.51,a:[8.23,3.5]},minus:{c:[2.17,3.23],R:11.38,a:[-9.15,3.5]}},
- helmet_football_helmet_2:{yC:165.5,clr:.4,s:[.99,.79],plus:{c:[-3.78,1.61],R:12.5,a:[8.58,3.5]},minus:{c:[2.78,1.61],R:12.5,a:[-9.58,3.5]}},
- helmet_football_helmet:{yC:165.5,clr:.4,s:[1.01,.82],plus:{c:[-5.72,2.79],R:14.49,a:[8.68,3.5]},minus:{c:[4.71,2.79],R:14.47,a:[-9.68,3.5]}},
- helmet_helmet:{yC:165.5,clr:.4,s:[.99,.67],plus:{c:[-5.99,2.30],R:14.8,a:[8.9,3.5]},minus:{c:[4.97,2.29],R:14.78,a:[-9.9,3.5]}}};
+/* finishes: 0 glossy, 1 matte, 2 chrome (a painted-on reflection of a stadium sky) */
+let envT=null;function envTex(){if(envT)return envT;const c=document.createElement('canvas');c.width=256;c.height=128;const x=c.getContext('2d'),g=x.createLinearGradient(0,0,0,128);g.addColorStop(0,'#f4f8ff');g.addColorStop(.3,'#9fb4cc');g.addColorStop(.5,'#39424e');g.addColorStop(.56,'#1c2a1e');g.addColorStop(1,'#3d6b3a');x.fillStyle=g;x.fillRect(0,0,256,128);x.fillStyle='#ffffff';for(let i=0;i<10;i++)x.fillRect(i*26+6,30+(i%3)*7,12,4);envT=new T.CanvasTexture(c);envT.mapping=T.EquirectangularReflectionMapping;envT.encoding=T.sRGBEncoding;return envT;}
+function finMat(c,fin,skin,map){const o={color:col(map?'#ffffff':c),skinning:!!skin,side:T.DoubleSide};if(map)o.map=map;if(fin===1)return new T.MeshLambertMaterial(o);const m=new T.MeshPhongMaterial(o);if(fin===2){m.envMap=envTex();m.combine=T.MixOperation;m.reflectivity=.62;m.shininess=160;m.specular=col('#ffffff');}else{m.shininess=85;m.specular=col('#5a5a5a');}return m;}
+function imgTex(src){return km('I'+src.length+src.slice(-24)+(Art.get(src)?1:0),()=>{const c=document.createElement('canvas');c.width=c.height=128;const im=Art.get(src);if(im){const k=Math.min(128/im.width,128/im.height);c.getContext('2d').drawImage(im,64-im.width*k/2,64-im.height*k/2,im.width*k,im.height*k);}const t=tex(c);t._ok=!!im;return t;});}
+function shellCanvas(t){const k=kitOf(t),c=document.createElement('canvas');c.width=c.height=256;const x=c.getContext('2d'),hl=k.hl==null?.42:+k.hl;x.fillStyle=t.helmet;x.fillRect(0,0,256,256);if(hl>0){const r=128*hl,im=k.hImg?Art.get(k.hImg):null;if(k.hImg){if(im){const q=Math.min(2*r/im.width,2*r/im.height);x.drawImage(im,128-im.width*q/2,122-im.height*q/2,im.width*q,im.height*q);}}else Art.logo(x,t,128,122,r);}return c;}
+function kitKey(t){const k=kitOf(t);return [t.helmet,t.mask,k.hfin|0,k.mfin|0,k.hl,(k.hImg||'').length,k.hImg&&Art.get(k.hImg)?1:0,t.logo.shape,t.logo.txt,t.c1,t.c2,t.c3,(t.logo.img||'').length,t.logo.img&&Art.get(t.logo.img)?1:0].join('|');}
+function helmMats(t,skin){return km('HM'+(skin?1:0)+kitKey(t),()=>{const k=kitOf(t),st=tex(shellCanvas(t));return {shell:finMat(t.helmet,k.hfin|0,skin,st),plain:finMat(t.helmet,k.hfin|0,skin,null),mask:finMat(t.mask||'#dddddd',k.mfin|0,skin,null)};});}
+function helmInstance(idx,t,p,hi){const o=HELMET_OPTS[idx],M=HELM_MOD[o.slug],hm=helmMats(t,false),v=(p.g||{}).v;
+ const vis=km('hv'+(v?1:0),()=>{const m=new T.MeshPhongMaterial({color:col(v?'#0b0e14':'#dfeaf2'),transparent:true,opacity:v?.88:.16,shininess:120,depthWrite:false,side:T.DoubleSide});return m;}),oth=km('hoth',()=>new T.MeshLambertMaterial({vertexColors:true,side:T.DoubleSide}));
+ const m=new T.Mesh(hi?M.hi:M.lo,[hm.shell,hm.mask,vis,oth]);m.frustumCulled=false;m.castShadow=detail>1;return m;}
 /* mod: per-part material treatment for the replacement player model - its own helmet, visor,
    pads and jersey meshes take the team colours directly (no mocap-suit texture surgery).
    Bodymat keeps the model's embedded body texture; referees get a black kit. */
-function modPartMat(meshName,q,c,t,home,ref,g){const jerC=ref?'#111111':home?t.c1:t.away,pantsC=ref?'#111111':t.pants;
+function modPartMat(meshName,q,c,t,home,ref){const jerC=ref?'#111111':home?t.c1:t.away,pantsC=ref?'#111111':t.pants;
  if(q.name==='Bodymat'){c.color=col('#ffffff');return c;}
  /* phase 3: Body_2's Fabric-Silk slot is the figure's whole right arm and its
     Fabric-Linen slot a few arm/shoulder patches - both carry UVs into the same
@@ -1156,12 +1140,7 @@ function modPartMat(meshName,q,c,t,home,ref,g){const jerC=ref?'#111111':home?t.c
  if(meshName==='helmet_1'||meshName==='covers')c.color=col(t.helmet);
  else if(meshName==='Loft'){c.color=col('#101318');c.transparent=true;c.opacity=.85;}
  else if(meshName==='Body_3_2')c.color=col(pantsC);
- /* phase 5 (F): the editor's Socks option drives Body_2's Default slot (the
-    lower-leg band of the body texture atlas): 0 = skin, 1 = team (phase-4
-    behaviour), 2 = white. Cleats option drives the shoes: 0 = white,
-    1 = black (phase-4 behaviour), 2 = team primary. */
- else if(meshName==='Body_2'&&q.name==='Default'){if(g&&g.so===0&&CH.tex){c.map=CH.tex;c.color=col('#ffffff');}else if(g&&g.so===2)c.color=col('#f1f1f1');else c.color=col(jerC);}
- else if(meshName==='shoes')c.color=col(ref?'#17181c':g&&g.cl===0?'#f1f1f1':g&&g.cl===2?t.c1:'#17181c');
+ else if(meshName==='shoes')c.color=col('#17181c');
  else c.color=col(jerC);
  return c;}
 /* phase 2: per-part build proportions (p.b via Art.dims — the same multipliers the
@@ -1182,84 +1161,147 @@ function applyProps(obj,D){if(!obj||!D)return;
  for(const [nm,k] of PROP_MAP){const b=obj.getObjectByName(nm);if(b)b.position.multiplyScalar(D[k]);}
  const hd=obj.getObjectByName('mixamorigHead');if(hd)hd.scale.setScalar(D.hd);
  for(const s of ['Left','Right']){const hn=obj.getObjectByName('mixamorig'+s+'Hand');if(hn)hn.scale.setScalar(D.ha);}}
-function mkSkinned(e,t,home,parent,ltex){const g_=mkGeo(),p=e.rp,ref=!!p.ref,g=p.g||{},jer=ref?'#ececec':home?t.c1:t.away,numC=home?t.c2:t.c1,line=p.pos==='OL'||p.pos==='DL'||p.pos==='LB',YD=91.44;
+/* The character FBX arrives as 8 skinned meshes, ~194,000 triangles and ~600 material groups, each mesh with its own
+   copy of the skeleton. Drawing 22 of those is what made the game crawl. optChar rebuilds it once at load as ONE skinned
+   mesh on ONE 41-bone skeleton: vertices are merged on a small grid (kept apart per mesh and per dominant bone, so limbs
+   never fuse), and triangles are sorted into a handful of kit groups (skin, jersey, pants, helmet, visor, shoes, socks,
+   gloves, arms, wrists) that take shared team materials. */
+const KIT_N=11,CELLK={helmet_1:.9,covers:1.1,Loft:.6,shoes:.9,Eyes:.7};
+function kitClass(mn,qn){if(qn==='Bodymat')return 0;if(mn==='Body_2')return qn==='Default'?6:0;if(mn==='shirt')return 1;if(mn==='Body_3_2')return 2;if(mn==='helmet_1'||mn==='covers')return 3;if(mn==='Loft')return 4;if(mn==='shoes')return 5;return 1;}
+function optChar(o,cell,CK){CK=CK||CELLK;const meshes=[];o.traverse(m=>{if(m.isSkinnedMesh)meshes.push(m);});if(!meshes.length)return null;o.updateMatrixWorld(true);
+ const sk0=meshes[0].skeleton,inv={};sk0.bones.forEach((b,i)=>{inv[b.name]=sk0.boneInverses[i];});
+ const root=new T.Group(),bones=[],binv=[],bi={},wp={};
+ const cp=(src,par)=>{const n=src.isBone?new T.Bone():new T.Group();n.name=src.name;n.position.copy(src.position);n.quaternion.copy(src.quaternion);n.scale.copy(src.scale);par.add(n);
+  if(src.isBone){bi[src.name]=bones.length;bones.push(n);binv.push(inv[src.name]?inv[src.name].clone():new T.Matrix4().copy(src.matrixWorld).invert());wp[src.name]=new T.Vector3().setFromMatrixPosition(src.matrixWorld);}
+  for(const c of src.children){if(c.isMesh||(c.isBone&&src.isBone&&c.name===src.name))continue;cp(c,n);}};
+ for(const c of o.children)if(!c.isMesh)cp(c,root);
+ const P=[],U=[],SI=[],SW=[],CN=[],DB=[],tris=[],v=new T.Vector3();let top=0;let belt=1e9;{const pm=meshes.find(m=>m.name==='Body_3_2');if(pm){if(!pm.geometry.boundingBox)pm.geometry.computeBoundingBox();belt=pm.geometry.boundingBox.clone().applyMatrix4(pm.bindMatrix).max.y-1;}else if(wp.mixamorigHips)belt=wp.mixamorigHips.y-2;}for(let i=0;i<KIT_N;i++)tris.push([]);
+ const limb=id=>{const nm=bones[DB[id]].name;if(/Hand/.test(nm))return 7;if(/ForeArm/.test(nm)){const s=/Left/.test(nm)?'Left':'Right',e=wp['mixamorig'+s+'ForeArm'],h=wp['mixamorig'+s+'Hand'];if(e&&h){const n=CN[id],dx=h.x-e.x,dy=h.y-e.y,dz=h.z-e.z,t=((P[id*3]/n-e.x)*dx+(P[id*3+1]/n-e.y)*dy+(P[id*3+2]/n-e.z)*dz)/(dx*dx+dy*dy+dz*dz);if(t>.78)return 9;}return 8;}const y=P[id*3+1]/CN[id],z=P[id*3+2]/CN[id],H=wp.mixamorigHead,NK=wp.mixamorigNeck;if(/Shoulder/.test(nm))return 1;if(/Arm/.test(nm)){const sd=/Left/.test(nm)?'Left':'Right',e=wp['mixamorig'+sd+'Arm'],h=wp['mixamorig'+sd+'ForeArm'];if(e&&h){const n=CN[id],dx=h.x-e.x,dy=h.y-e.y,dz=h.z-e.z,t=((P[id*3]/n-e.x)*dx+(y-e.y)*dy+(z-e.z)*dz)/(dx*dx+dy*dy+dz*dz);if(t<.32)return 1;}return 8;}if(/Spine|Neck/.test(nm)&&NK)return y>NK.y+1.2?0:y>belt?1:2;if(/Spine|Hips|UpLeg/.test(nm))return y>belt?1:2;if(/Head/.test(nm)&&H&&y>H.y+3.5&&z<H.z+4.5)return 10;return 0;};
+ for(const m of meshes){const g=m.geometry,pa=g.attributes.position,ua=g.attributes.uv,sia=g.attributes.skinIndex,swa=g.attributes.skinWeight,ix=g.index,bm=m.bindMatrix,flip=bm.determinant()<0,mats=Array.isArray(m.material)?m.material:[m.material],n=ix?ix.count:pa.count,groups=g.groups&&g.groups.length?g.groups:[{start:0,count:n,materialIndex:0}],remap=m.skeleton.bones.map(b=>bi[b.name]||0),s=cell*(CK[m.name]||1),map=new Map(),ws=[0,0,0,0],is=[0,0,0,0],arm=m.name==='Body_2';
+  const vert=k=>{v.fromBufferAttribute(pa,k).applyMatrix4(bm);ws[0]=swa.getX(k);ws[1]=swa.getY(k);ws[2]=swa.getZ(k);ws[3]=swa.getW(k);is[0]=sia.getX(k);is[1]=sia.getY(k);is[2]=sia.getZ(k);is[3]=sia.getW(k);let d=0;for(let j=1;j<4;j++)if(ws[j]>ws[d])d=j;const db=remap[is[d]]||0;
+   const key=(((Math.floor(v.x/s)+512)*1024+(Math.floor(v.y/s)+512))*1024+(Math.floor(v.z/s)+512))*64+db;let id=map.get(key);
+   if(id===undefined){id=CN.length;map.set(key,id);P.push(v.x,v.y,v.z);CN.push(1);DB.push(db);U.push(ua?ua.getX(k):0,ua?ua.getY(k):0);for(let j=0;j<4;j++){SI.push(remap[is[j]]||0);SW.push(ws[j]);}}
+   else{P[id*3]+=v.x;P[id*3+1]+=v.y;P[id*3+2]+=v.z;CN[id]++;}
+   if(v.y>top)top=v.y;return id;};
+  for(const gr of groups){const base=kitClass(m.name,(mats[gr.materialIndex]||{}).name||''),end=Math.min(n,gr.start+gr.count);
+   for(let k=gr.start;k+2<end;k+=3){const a=vert(ix?ix.getX(k):k),b=vert(ix?ix.getX(k+1):k+1),c=vert(ix?ix.getX(k+2):k+2);if(a===b||b===c||a===c)continue;const cls=base===0&&arm?limb(a):base;tris[cls].push(a,flip?c:b,flip?b:c);}}}
+ const nv=CN.length,pos=new Float32Array(nv*3);for(let i=0;i<nv;i++){pos[i*3]=P[i*3]/CN[i];pos[i*3+1]=P[i*3+1]/CN[i];pos[i*3+2]=P[i*3+2]/CN[i];}if(tris[3].length)sideUV(pos,new Set(tris[3]),U);
+ const geoB=new T.BufferGeometry(),index=[];let nt=0;
+ for(let c=0;c<KIT_N;c++){const t=tris[c],seen=new Set(),st=index.length;for(let k=0;k<t.length;k+=3){let a=t[k],b=t[k+1],d=t[k+2];if(nv<131072){while(a>b||a>d){const x=a;a=b;b=d;d=x;}const key=(a*131072+b)*131072+d;if(seen.has(key))continue;seen.add(key);}index.push(a,b,d);}if(index.length>st)geoB.addGroup(st,index.length-st,c);nt+=(index.length-st)/3;}
+ geoB.setAttribute('position',new T.BufferAttribute(pos,3));geoB.setAttribute('uv',new T.BufferAttribute(new Float32Array(U),2));geoB.setAttribute('skinIndex',new T.BufferAttribute(new Uint16Array(SI),4));geoB.setAttribute('skinWeight',new T.BufferAttribute(new Float32Array(SW),4));
+ geoB.setIndex(new T.BufferAttribute(nv>65535?new Uint32Array(index):new Uint16Array(index),1));geoB.computeVertexNormals();geoB.computeBoundingSphere();geoB.userData.keep=true;
+ const sm=new T.SkinnedMesh(geoB,new T.MeshLambertMaterial({skinning:true}));sm.name='kit';root.add(sm);root.updateMatrixWorld(true);sm.bind(new T.Skeleton(bones,binv),new T.Matrix4());sm.normalizeSkinWeights();
+ return {root,top,nt,nv,wp,belt};}
+const KM={};function km(k,f){return KM[k]||(KM[k]=f());}
+function kitMats(p,t,home,noHelm){const g=p.g||{},W='#f4f4f4',jer=home?t.c1:t.away,tone=Art.SKIN[p.sk||0],L=c=>km('L'+c,()=>new T.MeshLambertMaterial({color:col(c),skinning:true,side:T.DoubleSide}));
+ const skin=km('S'+tone+(CH.texV||0),()=>{const m=new T.MeshLambertMaterial({skinning:true});if(CH.tex){m.map=CH.tex;const a=col(tone),b=col('#c28974');m.color.setRGB(Math.min(1.5,a.r/b.r),Math.min(1.5,a.g/b.g),Math.min(1.5,a.b/b.b));}else m.color=col(tone);return m;});
+ const hide=km('hide',()=>{const m=new T.MeshBasicMaterial({skinning:true});m.visible=false;return m;}),hm=noHelm?null:helmMats(t,true);
+ const visor=noHelm?hide:km('V'+(g.v?1:0),()=>new T.MeshPhongMaterial({color:col(g.v?'#0b0e14':'#dfeaf2'),skinning:true,transparent:true,opacity:g.v?.88:.18,shininess:120,depthWrite:false}));
+ const arm=g.sl?L(Art.lum(jer)>.7?'#1b1b1b':Art.shade(jer,-.24)):skin;
+ return [skin,L(jer),L(t.pants),noHelm?hide:hm.shell,visor,L(g.cl===1?'#111111':g.cl===2?t.c2:'#f4f4f4'),g.so===1?L(Art.lum(jer)>.7?t.c1:jer):g.so===2?L(W):skin,L(g.gl===1?t.c2:g.gl===2?'#111111':'#f4f4f4'),arm,g.wb===1?L(W):g.wb===2?L(t.c2):g.sl?L(Art.lum(jer)>.7?'#1b1b1b':jer):arm,noHelm?skin:hm.plain];}
+/* Body proportions, done properly: instead of sliding joints apart (which only stretches the skin at the knee or elbow),
+   each bone gets a local stretch along its own length (or an even scale for head and hands). The rest-pose vertices are
+   re-posed through that stretch, the joints move with it and the bind matrices are rebuilt, so every clip plays on a
+   body that really has those limb lengths. A default build shares the template geometry untouched. */
+const AXB={Hips:['Spine','to'],Spine:['Spine1','to'],Spine1:['Spine2','to'],Spine2:['Neck','to'],Neck:['Head','nk'],Arm:['ForeArm','ua'],ForeArm:['Hand','fa'],UpLeg:['Leg','th'],Leg:['Foot','ca'],Foot:['ToeBase','ft']};
+function kitFit(sm,D){const sk=sm.skeleton,bones=sk.bones,n=bones.length,ix={};bones.forEach((b,i)=>{ix[b.name]=i;});
+ const W=sk.boneInverses.map(m=>new T.Matrix4().copy(m).invert()),hi=ix.mixamorigHips,hd=ix.mixamorigHead,ft=ix.mixamorigLeftFoot,hipY=hi!=null?W[hi].elements[13]:CH.hipY,headY=hd!=null?W[hd].elements[13]:CH.top*.86;
+ if(['to','nk','ua','fa','th','ca','ft','hd','ha'].every(k=>Math.abs((D[k]==null?1:D[k])-1)<.004))return {H:CH.top,legK:1,hd:1};
+ const S=[],Wn=[],v=new T.Vector3();
+ for(let i=0;i<n;i++){const nm=bones[i].name.replace('mixamorig',''),side=/^Left/.test(nm)?'Left':/^Right/.test(nm)?'Right':'',base=nm.slice(side.length),M=new T.Matrix4(),u=/^Head/.test(nm)?D.hd:/Hand/.test(nm)?D.ha:1;if(u!==1)M.makeScale(u,u,u);
+  const a=AXB[base],ch=a&&bones[ix['mixamorig'+side+a[0]]],k=a?D[a[1]]:1;if(ch&&k!==1){const d=v.copy(ch.position).normalize(),q=k-1;M.set(1+q*d.x*d.x,q*d.x*d.y,q*d.x*d.z,0,q*d.y*d.x,1+q*d.y*d.y,q*d.y*d.z,0,q*d.z*d.x,q*d.z*d.y,1+q*d.z*d.z,0,0,0,0,1);}
+  S.push(M);}
+ for(let i=0;i<n;i++){const b=bones[i],pi=b.parent&&b.parent.isBone?ix[b.parent.name]:-1;if(pi<0){Wn.push(W[i].clone());continue;}
+  const Lb=new T.Matrix4().copy(W[pi]).invert().multiply(W[i]),e=Lb.elements;v.set(e[12],e[13],e[14]).applyMatrix4(S[pi]);e[12]=v.x;e[13]=v.y;e[14]=v.z;Wn.push(Wn[pi].clone().multiply(Lb));b.position.applyMatrix4(S[pi]);}
+ const X=[];for(let i=0;i<n;i++)X.push(Wn[i].clone().multiply(S[i]).multiply(sk.boneInverses[i]).elements);
+ const g0=sm.geometry,pa=g0.attributes.position,si=g0.attributes.skinIndex.array,sw=g0.attributes.skinWeight.array,src=pa.array,out=new Float32Array(src.length);
+ for(let i=0,c=pa.count;i<c;i++){const x=src[i*3],y=src[i*3+1],z=src[i*3+2];let ox=0,oy=0,oz=0,ws=0;for(let j=0;j<4;j++){const w=sw[i*4+j];if(!w)continue;const m=X[si[i*4+j]];ox+=w*(m[0]*x+m[4]*y+m[8]*z+m[12]);oy+=w*(m[1]*x+m[5]*y+m[9]*z+m[13]);oz+=w*(m[2]*x+m[6]*y+m[10]*z+m[14]);ws+=w;}
+  if(ws>0){out[i*3]=ox/ws;out[i*3+1]=oy/ws;out[i*3+2]=oz/ws;}else{out[i*3]=x;out[i*3+1]=y;out[i*3+2]=z;}}
+ const g2=new T.BufferGeometry();g2.setAttribute('position',new T.BufferAttribute(out,3));for(const k of ['normal','uv','skinIndex','skinWeight'])g2.setAttribute(k,g0.attributes[k]);g2.setIndex(g0.index);for(const gr of g0.groups)g2.addGroup(gr.start,gr.count,gr.materialIndex);g2.computeBoundingSphere();
+ sm.geometry=g2;sm.bind(new T.Skeleton(bones,Wn.map(m=>new T.Matrix4().copy(m).invert())),new T.Matrix4());
+ const drop=ft!=null?W[ft].elements[13]-Wn[ft].elements[13]:0,topN=(hd!=null?Wn[hd].elements[13]:headY)+D.hd*(CH.top-headY);
+ return {H:topN+drop,legK:(hipY+drop)/hipY,hd:D.hd};}
+/* number and logo patches are small grids pressed onto the real surface of the model (sampled from its vertices) and pinned
+   to the bone under them, so they sit on the jersey or pants whatever the build */
+function panelGeo(sm,boneName,ax,sg,ca,cy,w,h,lim,lmax){const sk=sm.skeleton,bi=sk.bones.findIndex(b=>b.name===boneName);if(bi<0)return null;const inv=sk.boneInverses[bi],pa=sm.geometry.attributes.position,v=new T.Vector3(),N=6,R=Math.max(1.6,Math.min(3,w/5)),pts=[],pos=[],uv=[],idx=[],Z=ax==='z';
+ for(let i=0;i<pa.count;i++){const x=pa.getX(i),y=pa.getY(i),z=pa.getZ(i),a=Z?x:z,d=Z?z:x;if(sg*d<lim||(lmax!=null&&sg*d>lmax))continue;if(Math.abs(a-ca)<w/2+R&&Math.abs(y-cy)<h/2+R)pts.push(a,y,d);}
+ if(!pts.length)return null;let last=null;const D=[];for(let gy=0;gy<=N;gy++)for(let ga=0;ga<=N;ga++){const a=ca-w/2+w*ga/N,y=cy-h/2+h*gy/N;let d=-1e9;for(let k=0;k<pts.length;k+=3)if(Math.abs(pts[k]-a)<R&&Math.abs(pts[k+1]-y)<R)d=Math.max(d,sg*pts[k+2]);if(d>-1e8)last=d;D.push(d);}
+ if(last==null)return null;for(let i=0;i<D.length;i++)if(D[i]<-1e8){let b=null,bd=1e9;for(let k=0;k<D.length;k++)if(D[k]>-1e8){const dd=Math.abs((k%(N+1))-(i%(N+1)))+Math.abs(Math.floor(k/(N+1))-Math.floor(i/(N+1)));if(dd<bd){bd=dd;b=D[k];}}D[i]=b==null?last:b;}
+ for(let gy=0;gy<=N;gy++)for(let ga=0;ga<=N;ga++){const a=ca-w/2+w*ga/N,y=cy-h/2+h*gy/N,d=sg*(D[gy*(N+1)+ga]+.7);if(Z)v.set(a,y,d);else v.set(d,y,a);v.applyMatrix4(inv);pos.push(v.x,v.y,v.z);const un=ga/N;uv.push((Z?sg>0:sg<0)?un:1-un,gy/N);}
+ for(let gy=0;gy<N;gy++)for(let ga=0;ga<N;ga++){const a=gy*(N+1)+ga,b=a+1,c=a+N+2,d=a+N+1;idx.push(a,b,c,a,c,d);}
+ const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(pos,3));g.setAttribute('uv',new T.Float32BufferAttribute(uv,2));g.setIndex(idx);g.computeVertexNormals();return g;}
+function kitPanels(root){let sm=null;root.traverse(m=>{if(m.isSkinnedMesh)sm=m;});const W=n=>{const i=sm.skeleton.bones.findIndex(b=>b.name==='mixamorig'+n);return i<0?null:new T.Matrix4().copy(sm.skeleton.boneInverses[i]).invert().elements;},s2=W('Spine2'),la=W('LeftArm'),ra=W('RightArm'),ll=W('LeftUpLeg'),rl=W('RightUpLeg'),keep=g=>{if(g)g.userData.keep=true;return g;};if(!s2)return null;
+ const cx=s2[12],sy=s2[13],lsg=la&&la[12]>cx?1:-1;CH.pan={sm,cx,sy,la,ra,ll,rl,lsg,hp:W('Hips'),sp:W('Spine'),nk:W('Neck')};return {nf:keep(panelGeo(sm,'mixamorigSpine2','z',1,cx,sy-1,19,17,-99)),nb:keep(panelGeo(sm,'mixamorigSpine2','z',-1,cx,sy+1,22,20,-99))};}
+function logoPanels(kind,size){const q=CH.pan;if(!q)return [];return km('LP'+kind+size,()=>{const out=[],w=8.5*size;for(const [nm,M,sg] of kind==='j'?[['LeftArm',q.la,q.lsg],['RightArm',q.ra,-q.lsg]]:[['LeftUpLeg',q.ll,q.lsg],['RightUpLeg',q.rl,-q.lsg]]){if(!M)continue;const g=kind==='j'?panelGeo(q.sm,'mixamorig'+nm,'x',sg,M[14],M[13]-5-w*.2,w,w,Math.abs(M[12]-q.cx)*.75,Math.abs(M[12]-q.cx)+13):panelGeo(q.sm,'mixamorig'+nm,'x',sg,M[14]+1,M[13]-9-w*.25,w,w,Math.abs(M[12]-q.cx)*.6,Math.abs(M[12]-q.cx)+14);if(g){g.userData.keep=true;out.push([nm,g]);}}return out;});}
+function extraGeo(kind){const q=CH.pan;if(!q)return null;return km('XG'+kind,()=>{let g=null;const belt=CH.belt<1e8?CH.belt:(q.hp?q.hp[13]:100);
+ if(kind==='tw'&&q.hp)g=panelGeo(q.sm,'mixamorigHips','z',1,q.cx+6,belt-10,8,19,-99,18);else if(kind==='bp'&&q.sp)g=panelGeo(q.sm,'mixamorigSpine','z',-1,q.cx,belt+3.5,17,10,-99,18);else if(kind==='h'&&q.nk)g=panelGeo(q.sm,'mixamorigNeck','z',-1,q.cx,q.nk[13]+1,13,15,-99,18);if(g)g.userData.keep=true;return g;});}
+function mkKit(e,t,home,parent,ltex){const g_=mkGeo(),p=e.rp,g=p.g||{},numC=home?t.c2:t.c1,YD=91.44,pvw=parent!==scene;
+ const obj=T.SkeletonUtils.clone(pvw&&CH.objHi?CH.objHi:CH.obj),root=new T.Group(),flip=new T.Group();flip.rotation.y=Math.PI;root.add(flip);flip.add(obj);
+ let sm=null;obj.traverse(m=>{if(m.isSkinnedMesh)sm=m;});const D=Art.dims(p),fit=kitFit(sm,D),ht=(p.ht||73)/36,ps=ht*1.02/fit.H;obj.scale.set(ps*D.ws,ps,ps*D.ws);
+ const hIdx=helmIdx(p,t),hTpl=hIdx?helmGet(hIdx):null,hOn=!!hTpl;sm.material=kitMats(p,t,home,hOn);sm.frustumCulled=false;sm.castShadow=detail>1;
+ const head=obj.getObjectByName('mixamorigHead'),chest=obj.getObjectByName('mixamorigSpine2'),hand=obj.getObjectByName('mixamorigRightHand'),hips=obj.getObjectByName('mixamorigHips'),K=kitOf(t);
+ if(hOn&&head&&CH.headInv){const hg2=helmInstance(hIdx,t,p,pvw);hg2.matrix.copy(CH.headInv).premultiply(new T.Matrix4().makeScale(fit.hd,fit.hd,fit.hd));hg2.matrixAutoUpdate=false;head.add(hg2);}
+ const pm=map=>new T.MeshLambertMaterial({map,transparent:true,side:T.DoubleSide,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2});
+ if(chest&&CH.numG){const nt=pm(numTex(p.num,numC));if(CH.numG.nf)mesh(CH.numG.nf,nt,0,0,0,chest);if(CH.numG.nb)mesh(CH.numG.nb,nt,0,0,0,chest);}
+ for(const [kind,bone,c] of [['tw','Hips',Art.lum(t.pants)>.8?'#cfd3d8':'#f4f4f4'],['bp','Spine',Art.lum(t.c2)>.85?'#e6e6e6':t.c2],['h','Neck',['#3a2a1c','#2a1c12','#1c130c','#120c08','#0a0705'][p.sk||0]]])if(g[kind]){const xg=extraGeo(kind),b=obj.getObjectByName('mixamorig'+bone);if(xg&&b)mesh(xg,km('XM'+c,()=>new T.MeshLambertMaterial({color:col(c),side:T.DoubleSide,polygonOffset:true,polygonOffsetFactor:-3,polygonOffsetUnits:-3})),0,0,0,b);}
+ for(const [kind,sz,img] of [['j',+K.jl||0,K.jImg],['p',+K.pl||0,K.pImg]])if(sz>0){const lt=img?imgTex(img):ltex;if(lt){const lm=pm(lt);for(const [nm,g] of logoPanels(kind,Math.round(sz*10)/10)){const b=obj.getObjectByName('mixamorig'+nm);if(b)mesh(g,lm,0,0,0,b);}}}
+ const bn=n=>obj.getObjectByName('mixamorig'+n),arms=[];for(const [sd,nm] of [[-1,'Left'],[1,'Right']]){const u=bn(nm+'Arm'),f=bn(nm+'ForeArm'),h=bn(nm+'Hand');if(u&&f&&h)arms.push({sd,u,f,h});}
+ const B={root,skinned:true,obj,hand,hips,legK:fit.legK,arms,spine:bn('Spine1'),mix:new T.AnimationMixer(obj),acts:{},cur:'',curA:null,t,ti:e.team,hs:1,carryY:ht*.6,qbY:ht*.75,top:ht*1.04,j:[],ph0:Math.random()*6};
+ for(const k in CH.clips)B.acts[k]=B.mix.clipAction(CH.clips[k]);
+ const sh=mesh(g_.blob,new T.MeshBasicMaterial({color:0,transparent:true,opacity:.3,depthWrite:false}),0,.03,0,root);sh.rotation.x=-Math.PI/2;sh.scale.setScalar(ht/2);parent.add(root);return B;}
+function mkSkinned(e,t,home,parent,ltex){if(CH.opt&&!e.rp.ref)return mkKit(e,t,home,parent,ltex);const g_=mkGeo(),p=e.rp,ref=!!p.ref,g=p.g||{},jer=ref?'#ececec':home?t.c1:t.away,numC=home?t.c2:t.c1,line=p.pos==='OL'||p.pos==='DL'||p.pos==='LB',YD=91.44;
  const obj=T.SkeletonUtils.clone(CH.obj),tx=CH.hasHelmet?null:teamTex(jer),root=new T.Group(),flip=new T.Group();flip.rotation.y=Math.PI;root.add(flip);flip.add(obj);const ht=(p.ht||73)/36,sc=ht/CH.h;
- if(CH.hasHelmet){const D=Art.dims(p);
-  /* phase 5 (B4): capture the mapped bones' REST offsets before applyProps
-     scales them. animate() re-asserts rest x factor after every mixer update
-     (B.prop), so the proportions no longer depend on the one-time build-time
-     application surviving clone/bind/mixer state handling anywhere in the
-     chain. Default build (all factors 1) keeps B.prop null and the exact
-     phase-4 path. */
-  let prop=null;
-  if(PROP_MAP.some(([,k])=>D[k]!==1)||D.hd!==1||D.ha!==1){const list=[];for(const [nm,k] of PROP_MAP){const b=obj.getObjectByName(nm);if(b)list.push([b,b.position.clone(),k]);}prop={D,list,hd:obj.getObjectByName('mixamorigHead'),ha:['Left','Right'].map(s2=>obj.getObjectByName('mixamorig'+s2+'Hand')).filter(Boolean)};}
-  applyProps(obj,D);obj.userData.prop=prop;const ps=sc/(D.raw/PROP_RAW0);obj.scale.set(ps*D.ws,ps,ps*D.ws);}else obj.scale.setScalar(sc);
+ if(CH.hasHelmet){const D=Art.dims(p);applyProps(obj,D);const ps=sc/(D.raw/PROP_RAW0);obj.scale.set(ps*D.ws,ps,ps*D.ws);}else obj.scale.setScalar(sc);
  obj.position.set(0,0,0);
  const hIdx=CH.hasHelmet&&!ref?helmIdx(p):0,hTpl=hIdx?helmGet(hIdx):null,hOn=!!hTpl;
- obj.traverse(m=>{if(!m.isMesh)return;m.frustumCulled=false;m.castShadow=detail>1;if(hOn&&(m.name==='helmet_1'||m.name==='covers'||m.name==='Loft')){m.visible=false;return;}
-  /* phase 5 (F): the editor's Visor option now drives the model's Loft (its
-     visor mesh) on the stock path too - phase 4 rendered it for everyone,
-     which made Visor=None a dead option on this model. */
-  if(m.name==='Loft'&&!g.v){m.visible=false;return;}if(!ref&&/hat/i.test(m.name||'')){m.visible=false;return;}const arr=Array.isArray(m.material),ms=(arr?m.material:[m.material]).map(q=>{const c=q.clone();if(CH.hasHelmet){c.skinning=true;return modPartMat(m.name,q,c,t,home,ref,g);}if(CH.tex&&q.map&&q.map===CH.tex)c.map=tx;else if(!CH.tex)c.color=col(/joint/i.test(q.name||'')?(ref?'#111111':home?t.c2:t.c1):jer);if(/reflect/i.test(q.name||''))c.color=col(jer);c.skinning=true;return c;});m.material=arr?ms:ms[0];});
+ obj.traverse(m=>{if(!m.isMesh)return;m.frustumCulled=false;m.castShadow=detail>1;if(hOn&&(m.name==='helmet_1'||m.name==='covers'||m.name==='Loft')){m.visible=false;return;}if(!ref&&/hat/i.test(m.name||'')){m.visible=false;return;}const arr=Array.isArray(m.material),ms=(arr?m.material:[m.material]).map(q=>{const c=q.clone();if(CH.hasHelmet){c.skinning=true;return modPartMat(m.name,q,c,t,home,ref);}if(CH.tex&&q.map&&q.map===CH.tex)c.map=tx;else if(!CH.tex)c.color=col(/joint/i.test(q.name||'')?(ref?'#111111':home?t.c2:t.c1):jer);if(/reflect/i.test(q.name||''))c.color=col(jer);c.skinning=true;return c;});m.material=arr?ms:ms[0];});
  const head=obj.getObjectByName('mixamorigHead'),chest=obj.getObjectByName('mixamorigSpine2'),hand=obj.getObjectByName('mixamorigRightHand');
  if(!ref&&head){const hg=new T.Group();hg.scale.setScalar(YD*1.02);hg.rotation.y=Math.PI;hg.position.set(0,9.5,1.5);head.add(hg);
   if(!CH.hasHelmet){bake(helmetParts(t,g,line,detail>0,null),1,hg);
   if(g.v)mesh(g_.visor,new T.MeshPhongMaterial({color:0x0b0e14,transparent:true,opacity:.88,side:T.DoubleSide,shininess:120}),0,-.03,-.03,hg).scale.setScalar(.86);}
-  if(ltex&&!hOn){const dm=new T.MeshLambertMaterial({map:ltex,transparent:true});
-   if(CH.hasHelmet){/* phase 5 (A2): flat decal -> patch bent onto the stock shell's measured side surface (hg frame: centre (sd*.0116,-.0389), R .1221, anchor sd*.1274 - MOD_NOTES 5) */
-    const dmp=new T.MeshLambertMaterial({map:ltex,transparent:true,side:T.DoubleSide});
-    for(const sd of [-1,1]){const d=new T.Mesh(decalPatch(sd*.0116,-.0389,.1221,sd*.1274,0,.015,.0697,.006,1.14,.73),dmp);d.frustumCulled=false;hg.add(d);}}
-   else for(const sd of [-1,1]){const d=mesh(g_.decal,dm,sd*.152,.015,0,hg);d.rotation.y=sd*Math.PI/2;d.scale.setScalar(.82);}}}
- if(hOn&&head){const hg2=helmInstance(hIdx,t);root.updateMatrixWorld(true);hg2.updateMatrix();const L=new T.Matrix4().getInverse(head.matrixWorld).multiply(obj.matrixWorld).multiply(hg2.matrix);hg2.matrixAutoUpdate=false;hg2.matrix.copy(L);head.add(hg2);
-  /* phase 5 (A2): logo patches on the imported shells too, bent per shell */
-  if(ltex){const P=HELM_DECAL[HELMET_OPTS[hIdx].slug];if(P){const dmp=new T.MeshLambertMaterial({map:ltex,transparent:true,side:T.DoubleSide});for(const sd of [-1,1]){const q2=sd>0?P.plus:P.minus;const d=new T.Mesh(decalPatch(q2.c[0],q2.c[1],q2.R,q2.a[0],q2.a[1],P.yC,6.97,P.clr,P.s[0],P.s[1]),dmp);d.frustumCulled=false;hg2.add(d);}}}}
- if(!ref&&chest){const ng=new T.Group();ng.scale.set(YD*.8,YD*.8,YD*.6);ng.rotation.y=Math.PI;ng.position.set(0,1,0);chest.add(ng);const nt=new T.MeshLambertMaterial({map:numTex(p.num,numC),transparent:true});
-  /* phase 5 (B5): the stock number arcs floated on this model (front median
-     0.0098 / back median 0.0232 game units off the chest, harness-measured in
-     the real mkSkinned flow). Per-mesh scale+offset refit: front min/med/p95
-     .0027/.0060/.0096, back .0034/.0064/.0144, nothing sunk. */
-  const nmF=mesh(g_.num,nt,.007,0,-.035,ng);nmF.scale.set(.9,1,.9);
-  const nmB=mesh(g_.numB,nt,.021,0,-.035,ng);nmB.scale.set(.91,1,.91);}
- const B={root,skinned:true,obj,hand,mix:new T.AnimationMixer(obj),acts:{},cur:'',curA:null,t,ti:e.team,hs:1,carryY:ht*.6,qbY:ht*.75,top:ht*1.04,j:[],ph0:Math.random()*6,prop:obj.userData.prop||null};
+  if(ltex&&!hOn){const dm=new T.MeshLambertMaterial({map:ltex,transparent:true});for(const sd of [-1,1]){const d=mesh(g_.decal,dm,sd*(CH.hasHelmet?.127:.152),.015,0,hg);d.rotation.y=sd*Math.PI/2;d.scale.setScalar(.82);}}}
+ if(hOn&&head){const hg2=helmInstance(hIdx,t,p,false);root.updateMatrixWorld(true);hg2.updateMatrix();const L=new T.Matrix4().getInverse(head.matrixWorld).multiply(obj.matrixWorld).multiply(hg2.matrix);hg2.matrixAutoUpdate=false;hg2.matrix.copy(L);head.add(hg2);}
+ if(!ref&&chest){const ng=new T.Group();ng.scale.set(YD*.8,YD*.8,YD*.6);ng.rotation.y=Math.PI;ng.position.set(0,1,0);chest.add(ng);const nt=new T.MeshLambertMaterial({map:numTex(p.num,numC),transparent:true});mesh(g_.num,nt,0,0,0,ng);mesh(g_.numB,nt,0,0,0,ng);}
+ const B={root,skinned:true,obj,hand,mix:new T.AnimationMixer(obj),acts:{},cur:'',curA:null,t,ti:e.team,hs:1,carryY:ht*.6,qbY:ht*.75,top:ht*1.04,j:[],ph0:Math.random()*6};
  for(const k in CH.clips)B.acts[k]=B.mix.clipAction(CH.clips[k]);
- if(B.acts.def)B.acts.def.setLoop(T.LoopPingPong,Infinity); /* phase 5 (C6): trimmed crouch loops without a pop */
  const sh=mesh(g_.blob,new T.MeshBasicMaterial({color:0,transparent:true,opacity:.3,depthWrite:false}),0,.03,0,root);sh.rotation.x=-Math.PI/2;sh.scale.setScalar(ht/2);parent.add(root);return B;}
-const ONCE={stance:1,throw:1,kick:1,catch:1,tackle:1,fall:1,getup:1,hike:1},SKIP={tackle:.08,fall:.4,throw:.25}; /* phase 5 (C7): SKIP.tackle was .5 - measured on this skeleton the tackle clip's drive/wrap phase is 0-~33% and at 50% the tackler is already horizontal (spine pitch 84 deg), so tackles started mid-fall. .08 starts at the drive. fall keeps .4: that clip's hips spike upward until ~34%. */
-function animate(e,B,S,dt){const b=S.ball,pl=S.play||{},sp=Math.hypot(e.vx,e.vz),live=S.phase==='live'||S.phase==='dead',f=e.vx*e.hx+e.vz*e.hz,sd=e.vx*e.hz-e.vz*e.hx,car=b.carrier===e,an=e.anim,role=e.role,pos=e.rp.pos;e.animT+=dt;let w='idle',rate=1;
- if(!live){if(role==='REF'||role==='CAP'||role==='K'||role==='P'||role==='RET'||role==='QB'||role==='H')w='idle';else if(an==='set3')w='stance';else if(pos==='CB'||pos==='S'||pos==='LB')w='def';else w='idle';}
- else if(e.down||an==='down')w='fall';
- else if(e.dive>0||(an==='dive'&&e.stun>0))w='tackle';
+/* What the clips really contain (checked frame by frame): 'tackle' and 'def' are the same motion - a runner taking a hit and
+   going to ground; 'fall' and 'catch' are the same leaping grab that ends in a crash; 'hike' is a wide ready crouch; 'stance'
+   settles into a hands-on-knees set. So: nobody plays 'def' any more, the ready crouch is the base for defenders and for
+   blocking, a tackle uses the going-to-ground part of 'tackle' for both men, and a catch stops before the crash. */
+const ONCE={stance:1,throw:1,kick:1,catch:1,tackle:1,getup:1},SKIP={tackle:.27,getup:.3,throw:.47,catch:.12},STOP={catch:.33};
+let _q1,_q2,_q3,_v1,_v2,_v3;
+function aim(bone,child,dir,k){child.updateWorldMatrix(true,false);_v1.setFromMatrixPosition(bone.matrixWorld);_v2.setFromMatrixPosition(child.matrixWorld).sub(_v1).normalize();_q1.setFromUnitVectors(_v2,dir);bone.getWorldQuaternion(_q2);_q1.multiply(_q2);bone.parent.getWorldQuaternion(_q3).invert();_q3.multiply(_q1);bone.quaternion.slerp(_q3,k);}
+function push(B,k,t){if(!_q1){_q1=new T.Quaternion();_q2=new T.Quaternion();_q3=new T.Quaternion();_v1=new T.Vector3();_v2=new T.Vector3();_v3=new T.Vector3();}const r=B.root.rotation.y,fx=-Math.sin(r),fz=-Math.cos(r),rx=Math.cos(r),rz=-Math.sin(r),jab=Math.sin(t*9+B.ph0)*.08;if(B.spine)B.spine.rotateX(.08*k);
+ for(const a of B.arms){const sd=a.sd;_v3.set(fx*.9+rx*sd*.2,-.42+jab*sd,fz*.9+rz*sd*.2).normalize();aim(a.u,a.f,_v3,k);_v3.set(fx*.95-rx*sd*.12,.2,fz*.95-rz*sd*.12).normalize();aim(a.f,a.h,_v3,k);}}
+function animate(e,B,S,dt){const b=S.ball,pl=S.play||{},sp=Math.hypot(e.vx,e.vz),live=S.phase==='live'||S.phase==='dead',f=e.vx*e.hx+e.vz*e.hz,sd=e.vx*e.hz-e.vz*e.hx,car=b.carrier===e,an=e.anim,role=e.role,pos=e.rp.pos;e.animT+=dt;let w='idle',rate=1,hx=e.hx,hz=e.hz,pk=0,hold=-1;
+ const mate=S.phase==='live'&&!e.down&&!car?(e.eng||(e.blk&&!e.blk.down&&Math.hypot(e.blk.x-e.x,e.blk.z-e.z)<1.7?e.blk:null)):null;
+ if(!live){if(role==='REF'||role==='CAP'||role==='K'||role==='P'||role==='RET'||role==='QB'||role==='H')w='idle';else if(an==='set3')w='stance';else if(pos==='CB'||pos==='S'){w='stance';hold=.36;}else if(pos==='LB'||pos==='DL'){w='stance';hold=.46;}else if(pos==='WR'||pos==='TE'||pos==='RB'||pos==='FB'){w='stance';hold=.3;}else w='idle';}
+ else if(e.down||an==='down'){w='tackle';rate=1.35;}
+ else if(e.dive>0||(an==='dive'&&e.stun>0)){w='tackle';rate=1.7;}
  else if(an==='miss'&&e.stun>0)w='getup';
  else if(an==='cheer'||an==='sig')w='cheer';
- else if(an==='throw'&&e.animT<.9){w='throw';rate=1.7;}
+ else if(an==='throw'&&e.animT<.9){w='throw';rate=1.3;}
  else if(an==='kick'&&e.animT<1.1){w='kick';rate=1.3;}
- else if(an==='catch'&&!car&&b.state==='air'&&Math.hypot(b.x-e.x,b.z-e.z)<6)w='catch';
+ else if(an==='catch'&&!car&&b.state==='air'&&Math.hypot(b.x-e.x,b.z-e.z)<5&&b.y>1.6)w='catch';
+ else if(mate){const dx=mate.x-e.x,dz=mate.z-e.z,d=Math.hypot(dx,dz)||1;hx=dx/d;hz=dz/d;pk=1;if(sp>2.2){w=f<0?'back':'jog';rate=Math.max(.7,Math.min(1.5,sp/3.2));}else{w='stance';hold=.5;}}
  else if(sp>1){if(f<-.8&&Math.abs(f)>=Math.abs(sd)){w='back';rate=sp/4.5;}else if(Math.abs(sd)>Math.abs(f)){w=sd>0?'sr':'sl';rate=sp/2.4;}else if(sp>5){w='run';rate=sp/7.6;}else{w='jog';rate=sp/3.4;}rate=Math.max(.55,Math.min(1.7,rate));}
- else if(e.eng||(an==='block'&&e.blk)||(S.phase==='live'&&!car&&b.carrier&&b.carrier.team!==e.team))w='def';
+ else if(S.phase==='live'&&!car&&b.carrier&&b.carrier.team!==e.team){w='stance';hold=.38;}
  if(!B.acts[w])w='idle';
- if(w!==B.cur){const a=B.acts[w];if(a){a.reset();if(ONCE[w]){a.setLoop(T.LoopOnce,1);a.clampWhenFinished=true;}if(SKIP[w])a.time=a.getClip().duration*SKIP[w];a.fadeIn(.16);a.play();if(B.curA&&B.curA!==a)B.curA.fadeOut(.16);B.cur=w;B.curA=a;}}
- if(B.curA)B.curA.timeScale=rate;
- /* phase 5 (E11): mixer LOD - bodies far from the ball update their skeleton
-    at 30 Hz (accumulated dt), near bodies every frame; a dt of 0 (paused /
-    first frame) skips the mixer entirely. Root position/rotation still set
-    every call, so movement never stutters. */
- let mdt=dt;
- if(dt>0&&Math.abs(e.x-b.x)+Math.abs(e.z-b.z)>60){B.acc=(B.acc||0)+dt;if(B.acc<1/30)mdt=0;else{mdt=B.acc;B.acc=0;}}
- if(mdt>0){B.mix.update(mdt);
-  /* phase 5 (B4): re-assert edited proportions AFTER the mixer, every frame -
-     immune to any build-time neutralisation in clone/bind/mixer handling. */
-  if(B.prop){const P=B.prop;for(const [bn,r,k] of P.list)bn.position.copy(r).multiplyScalar(P.D[k]);if(P.hd)P.hd.scale.setScalar(P.D.hd);for(const hn of P.ha)hn.scale.setScalar(P.D.ha);}}
- B.root.position.set(e.x,0,-e.z);B.root.rotation.y=Math.atan2(-e.hx,e.hz);}
+ const wk=hold<0?w:w+'@'+hold;if(wk!==B.cur){const a=B.acts[w];if(a){a.reset();a.paused=false;if(hold>=0){a.time=a.getClip().duration*hold;a.paused=true;}else if(ONCE[w]){a.setLoop(T.LoopOnce,1);a.clampWhenFinished=true;}if(hold<0&&SKIP[w])a.time=a.getClip().duration*SKIP[w];a.fadeIn(.16);a.play();if(B.curA&&B.curA!==a)B.curA.fadeOut(.16);B.cur=wk;B.curA=a;}}
+ if(B.curA){B.curA.timeScale=rate;if(hold<0&&STOP[w]&&B.curA.time>B.curA.getClip().duration*STOP[w])B.curA.paused=true;}B.mix.update(dt);if(B.legK&&B.legK!==1&&B.hips&&B.curA)B.hips.position.y*=B.legK;
+ B.root.position.set(e.x,0,-e.z);const ty=Math.atan2(-hx,hz);if(B.yaw==null)B.yaw=ty;let dy=ty-B.yaw;dy=Math.atan2(Math.sin(dy),Math.cos(dy));B.yaw+=dy*Math.min(1,dt*14);B.root.rotation.y=B.yaw;
+ B.pk=(B.pk||0)+((pk?1:0)-(B.pk||0))*Math.min(1,dt*9);if(B.pk>.03&&B.arms)push(B,B.pk,time);}
 /* ---------- live 3D preview for the editors ---------- */
 function stadPreview(c2,t,ru,ang){if(!ok)return false;const key=JSON.stringify([t.stad,t.field,t.c1,t.c2,t.c3,t.logo.shape,t.logo.txt,(t.logo.img||'').length,(t.field.img||'').length,ru.id]);
  if(key!==spKey||!scene){const d0=detail;detail=Math.min(1,d0);try{build({home:t,away:t,rules:ru});}finally{detail=d0;}spKey=key;}
  const w=c2.width,h=c2.height,L=ru.L,R=175;ren.setPixelRatio(1);ren.setSize(w,h,false);const was=ren.shadowMap.enabled;ren.shadowMap.enabled=false;cam.aspect=w/h;cam.fov=42;cam.updateProjectionMatrix();cam.position.set(Math.sin(ang)*R,85,-L/2+Math.cos(ang)*R*1.1);cam.lookAt(0,2,-L/2);
  losM.visible=fdM.visible=ring.visible=false;ren.render(scene,cam);ren.shadowMap.enabled=was;try{const x=c2.getContext('2d');x.clearRect(0,0,w,h);x.drawImage(ren.domElement,0,0,w,h);}catch(e){}return true;}
-let pvs={},domeInfo=null;const PVS={phase:'pre',ball:{carrier:null,x:0,y:0,z:0,state:'dead'},play:{}},REF={c1:'#111111',c2:'#111111',away:'#f4f4f4',pants:'#111111',helmet:'#111111',mask:'#111111'};
+let pvs={};const PVS={phase:'pre',ball:{carrier:null,x:0,y:0,z:0,state:'dead'},play:{}},REF={c1:'#111111',c2:'#111111',away:'#f4f4f4',pants:'#111111',helmet:'#111111',mask:'#111111'};
 function preview(c2,t,p,home,yaw,dt,slot){if(!ok)return false;let pv=pvs[slot||'a'];
  if(!pv){pv=pvs[slot||'a']={scene:new T.Scene(),cam:new T.PerspectiveCamera(28,1,.1,60),key:'',B:null,e:null,lt:null};pv.scene.background=col('#0d1117');pv.scene.add(new T.HemisphereLight(0xffffff,0x39424e,.8));const d=new T.DirectionalLight(0xffffff,.95);d.position.set(3,6,5);pv.scene.add(d);const r2=new T.DirectionalLight(0x9db8ff,.45);r2.position.set(-4,3,-5);pv.scene.add(r2);
   const fl=mesh(new T.CircleGeometry(1.3,32),new T.MeshLambertMaterial({color:col('#2f7a36')}),0,0,0,pv.scene);fl.rotation.x=-Math.PI/2;}
- const key=JSON.stringify([p.g,p.b,p.ht,p.wt,p.sk,p.num,p.n,p.pos,t.c1,t.c2,t.helmet,t.mask,t.pants,t.away,home,t.logo.shape,t.logo.txt,(t.logo.img||'').length,detail,CH.ready&&mocap]);
+ const key=JSON.stringify([p.g,p.b,p.ht,p.wt,p.sk,p.num,p.n,p.pos,t.c1,t.c2,t.helmet,t.mask,t.pants,t.away,home,t.logo.shape,t.logo.txt,(t.logo.img||'').length,detail,CH.ready&&mocap,kitKey(t),kitOf(t).helm,kitOf(t).jl,kitOf(t).pl,(kitOf(t).jImg||'').length,(kitOf(t).pImg||'').length,Object.keys(HELM_MOD).length,CH.texV|0]);
  if(key!==pv.key){if(pv.B){pv.B.root.traverse(o=>{if(o.geometry&&!isShared(o.geometry))o.geometry.dispose();});pv.scene.remove(pv.B.root);}if(pv.lt)pv.lt.dispose();pv.lt=tex(Art.logoURL(t,128));
   pv.e={team:9,rp:p,role:'CAP',x:0,z:0,vx:0,vz:0,hx:0,hz:1,anim:'idle',animT:0,down:false,dive:0,stun:0,eng:null,blk:null,juke:0};pv.B=mkBody(pv.e,t,home,pv.scene,pv.lt);pv.key=key;}
  pv.e.hx=Math.sin(yaw);pv.e.hz=Math.cos(yaw);PVS.ball.x=pv.e.hx*8;PVS.ball.z=pv.e.hz*8;pose(pv.e,pv.B,PVS,dt);
@@ -1282,7 +1324,7 @@ function stand(o){const {x,z,len,depth,ry,y0,team,max}=o,g=new T.Group(),h=depth
  const base=mesh(new T.PlaneGeometry(len,sl),mat('#3a3f48',{side:T.DoubleSide}),0,y0+h/2,-depth/2,g);base.rotation.x=-(Math.PI/2-ang);
  mesh(new T.BoxGeometry(len,o.lower?y0:2.2,.7),mat(o.lower?team.c1:'#20242b'),0,o.lower?y0/2:y0-.6,.35,g);mesh(new T.BoxGeometry(len,.12,.12),mat('#d7dbe0'),0,y0+.75,.6,g);
  mesh(new T.BoxGeometry(len,2.6,1.2),mat('#2b3038'),0,y0+h+1.3,-depth-.6,g);if(!o.lower)mesh(new T.BoxGeometry(len,y0-o.under,depth*.7),mat('#191c22'),0,(y0+o.under)/2-.8,-depth*.5,g);
- if(detail>0){const am=mat('#23272e');for(let a=-len/2+9;a<len/2-4;a+=15){const s=mesh(new T.BoxGeometry(.9,sl,.08),am,a,y0+h/2+.05,-depth/2,g);s.rotation.x=-(Math.PI/2-ang); /* phase 5 (D9): was BoxGeometry(.9,.08,sl) - the long axis sat on the slope NORMAL, so every aisle stood up out of the crowd slope as a pole (up to ~18 units on big decks), in every stadium variant. Long axis now lies along the slope like the deck plane. */}}
+ if(detail>0){const am=mat('#23272e');for(let a=-len/2+9;a<len/2-4;a+=15){const s=mesh(new T.BoxGeometry(.9,sl,.08),am,a,y0+h/2+.05,-depth/2,g);s.rotation.x=-(Math.PI/2-ang);}}
  const sp=Math.max(1.02,Math.sqrt(len*depth/max)),cols=Math.floor(len/sp),rows=Math.floor(depth/sp),pts=[];
  for(let r=0;r<rows;r++)for(let k=0;k<cols;k++){const xx=-len/2+(k+.5)*sp;if(detail>0&&((xx+len/2-9+.45)%15+15)%15<.9)continue;if(Math.random()<.05)continue;const t=(r+.5)/rows;pts.push([xx+(Math.random()-.5)*.2,y0+h*t+.12,-depth*t]);}
  people(g,pts,[team.c1,team.c1,team.c1,team.c2,team.c2,'#f2f2f2','#2b3038','#5d6b7a','#8a2d2d','#2d4a8a'],true);scene.add(g);return g;}
@@ -1298,7 +1340,18 @@ function cornerStand(o){const {x,z,ry,dep,y0,team,spc,under}=o,g=new T.Group(),h
  if(under!=null){const un=new T.Mesh(new T.CylinderGeometry(dep*.55,dep*.55,y0-under,seg,1,true,TS,TL),mat('#191c22',DS));un.position.y=(y0+under)/2-.8;g.add(un);}
  const pts=[];for(let rho=1.2;rho<dep-.3;rho+=spc){const cnt=Math.max(1,Math.floor(rho*TL/spc));for(let k2=0;k2<cnt;k2++){if(Math.random()<.05)continue;const th=TS+(k2+.5)/cnt*TL;pts.push([rho*Math.sin(th)+(Math.random()-.5)*.2,y0+h*rho/dep+.12,rho*Math.cos(th)]);}}
  people(g,pts,[team.c1,team.c1,team.c1,team.c2,team.c2,'#f2f2f2','#2b3038','#5d6b7a','#8a2d2d','#2d4a8a'],true);scene.add(g);return g;}
+let stadR=[0,0],stadX=[];
+/* stadium export: rebuild this team's stadium, copy the field, goal posts and
+   pads (tracked in stadX by build()), the stands, boards, roof and towers
+   (not the crowd) and hand back a .glb */
+function stadExport(t,ru,cb){if(!ok||!T.GLTFExporter)return cb(null);try{const d0=detail;detail=1;try{build({home:t,away:t,rules:ru});}finally{detail=d0;}spKey='';const g=new T.Group(),std={};
+  const conv=m=>{const k=m.uuid;if(std[k])return std[k];const o=new T.MeshStandardMaterial({color:m.color?m.color.clone():new T.Color(1,1,1),roughness:.85,metalness:0,side:m.side,transparent:m.transparent,opacity:m.opacity});if(m.map)o.map=m.map;if(m.isMeshBasicMaterial&&m.map){o.emissive=new T.Color(1,1,1);o.emissiveMap=m.map;}return std[k]=o;};
+  const addC=c=>{if(!c||c.isSprite||c.isLight)return;const cl=c.clone(true),rm=[];cl.traverse(m=>{if(m.isInstancedMesh||m.isSprite)rm.push(m);else if(m.isMesh)m.material=conv(m.material);});for(const m of rm)if(m.parent)m.parent.remove(m);else return;if(!cl.isInstancedMesh)g.add(cl);};
+  for(let i=stadR[0];i<stadR[1];i++)addC(scene.children[i]);for(const c of stadX)addC(c);
+  new T.GLTFExporter().parse(g,r=>cb(r instanceof ArrayBuffer?r:null),{binary:true,onlyVisible:false});}catch(e){cb(null);}}
+function ribbonCanvas(t){const tx=adTex(t),c=tx.image;tx.dispose();return c;}
 function adTex(team){const c=document.createElement('canvas');c.width=1024;c.height=64;const x=c.getContext('2d');x.fillStyle=team.c2;x.fillRect(0,0,1024,64);x.font='italic 900 44px "Barlow Condensed",Impact,sans-serif';x.textBaseline='middle';
+ const rim=team.stad&&team.stad.rib?Art.get(team.stad.rib):null;if(rim){x.drawImage(rim,0,0,1024,64);const t=tex(c);t.wrapS=T.RepeatWrapping;return t;}
  const s=(team.name+' '+team.mascot).toUpperCase(),w=x.measureText(s).width+120,n=Math.max(1,Math.round(1024/w)),st=1024/n;for(let i=0;i<n;i++){Art.logo(x,team,i*st+34,32,24);x.fillStyle=team.c1;x.fillText(s,i*st+68,34);}const t=tex(c);t.wrapS=T.RepeatWrapping;return t;}
 function skyTex(kind){const c=document.createElement('canvas');c.width=512;c.height=512;const x=c.getContext('2d'),g=x.createLinearGradient(0,0,0,512),S={day:['#2f78d6','#8fc3f2','#d6ebfb'],dusk:['#2a2f66','#b9627a','#f6b26b'],night:['#03050d','#0a1024','#1a2440'],rain:['#4f5a64','#77838c','#9aa5ad'],snow:['#aeb8c1','#cfd6dc','#e6ebef']}[kind];
  g.addColorStop(0,S[0]);g.addColorStop(.6,S[1]);g.addColorStop(1,S[2]);x.fillStyle=g;x.fillRect(0,0,512,512);
@@ -1315,14 +1368,14 @@ function build(cfg){
  ren.shadowMap.enabled=detail>1;ren.shadowMap.type=T.PCFSoftShadowMap;sun.castShadow=detail>1;sun.shadow.mapSize.set(2048,2048);const sc=sun.shadow.camera;sc.left=-34;sc.right=34;sc.top=34;sc.bottom=-34;sc.near=10;sc.far=320;sun.shadow.bias=-.0006;if(sun.shadow.normalBias!==undefined)sun.shadow.normalBias=.03;
  for(let i=0;i<2;i++)logoTex[i]=tex(Art.logoURL(cfg[i?'away':'home'],128));
  const fc=document.createElement('canvas');fc.width=detail>1?2048:1024;fc.height=detail>1?4096:2048;Art.field(fc,home,ru,{snow:wxk==='snow',away:cfg.away});
- const fm=mesh(new T.PlaneGeometry(W+2*A,L+2*EZ+2*A),new T.MeshLambertMaterial({map:tex(fc)}),0,0,-L/2,scene);fm.rotation.x=-Math.PI/2;fm.receiveShadow=true;
+ const fm=mesh(new T.PlaneGeometry(W+2*A,L+2*EZ+2*A),new T.MeshLambertMaterial({map:tex(fc)}),0,0,-L/2,scene);fm.rotation.x=-Math.PI/2;fm.receiveShadow=true;stadX=[fm];
  const gm=mesh(new T.PlaneGeometry(1400,1400),mat(dome?'#2a2d33':'#39443a'),0,-.06,-L/2,scene);gm.rotation.x=-Math.PI/2;
  const yel=new T.MeshPhongMaterial({color:col('#f5d21f'),shininess:60}),py=mat('#ff7a1a');
  for(const s of [0,1]){const gz=s?L+(ru.postsAtGoal?0:EZ):-(ru.postsAtGoal?0:EZ),back=s?-1:1,g=new T.Group();g.position.set(0,0,-gz);
-  mesh(new T.CylinderGeometry(.14,.16,3.33,10),yel,0,1.66,back*1.7,g);const neck=mesh(new T.CylinderGeometry(.12,.12,1.8,10),yel,0,3.3,back*.85,g);neck.rotation.x=Math.PI/2;mesh(new T.BoxGeometry(.9,1.9,.9),mat(home.c1),0,.95,back*1.7,g);
+  mesh(new T.CylinderGeometry(.14,.16,3.33,10),yel,0,1.66,back*1.7,g);const neck=mesh(new T.CylinderGeometry(.12,.12,1.8,10),yel,0,3.3,back*.85,g);neck.rotation.x=Math.PI/2;if(home.field.padOn!==0)mesh(new T.BoxGeometry(.9,1.9,.9),mat(home.field.pad||home.c1),0,.95,back*1.7,g);
   const bar=mesh(new T.CylinderGeometry(.1,.1,6.17,10),yel,0,3.33,0,g);bar.rotation.z=Math.PI/2;for(const u of [-1,1]){mesh(new T.CylinderGeometry(.075,.085,8.2,10),yel,u*3.08,7.4,0,g);mesh(new T.BoxGeometry(.04,.5,.25),mat('#ff5a1a'),u*3.08,11.3,.14,g);}
-  g.traverse(o=>{o.castShadow=detail>1;});scene.add(g);for(const zz of [s?L:0,s?L+EZ:-EZ])for(const u of [-1,1])mesh(new T.BoxGeometry(.2,.5,.2),py,u*W/2,.25,-zz,scene);}
- const c0=scene.children.length;
+  g.traverse(o=>{o.castShadow=detail>1;});scene.add(g);stadX.push(g);for(const zz of [s?L:0,s?L+EZ:-EZ])for(const u of [-1,1])stadX.push(mesh(new T.BoxGeometry(.2,.5,.2),py,u*W/2,.25,-zz,scene));}
+ const c0=scene.children.length;stadR=[c0,c0];
  // seating bowl: four sides + corners, two decks on big stadiums
  const dep=[12,19,26,33][size-1],cap=[1500,2300,2900,3300][size-1]*(detail?1:.5),ex=W/2+A+3,ez=EZ+A+3,lenS=L+2*EZ+8,lenE=W+2*A,d2=dep*.62,y2=dep*.55+6;
  const shape=st.shape||'bowl',upc=st.up||{},UP=k=>upc[k]==null?size>=3:!!upc[k],press=st.press||'w';
@@ -1349,42 +1402,17 @@ function build(cfg){
  for(let z=0;z<=L;z+=10)for(const s of [-1,1]){const m=mesh(new T.BoxGeometry(.5,.9,.06),mat('#ff7a1a'),s*(W/2+1.6),.45,-z,scene);m.rotation.y=Math.PI/2;}
  // lights, roof, press box
  const topY=two?y2+d2*.55+3:dep*.55+4.4;for(const sd of [['w',-1],['e',1]])if(press===sd[0]||press==='both'){const u=UP(sd[0]);mesh(new T.BoxGeometry(5,5,Math.min(70,L*.6)),new T.MeshPhongMaterial({color:col('#1a2a3d'),shininess:120}),sd[1]*(ex+dep+(u?d2+3:2)),(u?y2+d2*.55+3:dep*.55+4.4)+1,-L/2,scene);}
- if(dome){/* phase 5 (D10): the dome was a hemisphere sized from the FIELD
-     (max(L,W)*1.35, height x.46) centred at -L/2 - at the larger sizes the
-     stands poked through it and its rim landed inside the footprint. An
-     ellipsoid cannot fix that: the footprint's corners sit at q=1.36 of any
-     ellipse fitted to the sides (measured). So the dome is now an extrusion
-     of the FOOTPRINT itself (rounded rectangle, phase-2 footprint extents):
-     vertical curtain walls on the footprint + a bevelled roof - it wraps by
-     construction at every size. The walls rise to H0=topY+13 - above every
-     stand wall, press box AND the light ring (topY+12), which sits close to
-     the side walls where a low bevel would still be rising. Roof plateau
-     RY=topY+20 clears the centre-hung board's crossbar (topY+13.5). */
-     const fpx=ex+dep+(two?d2+6:5)+2,fnz=L+ez+dep+(two?d2+6:5)+2,fsz=ez+dep+(two?d2+6:5)+2,zc=(fsz-fnz)/2,hfz=(fnz+fsz)/2;
-     const hw=fpx+10,hh=hfz+10,cr=Math.min(dep+10,hw*.45,hh*.45),H0=topY+13,RY=topY+20,bev=Math.min(hw,hh)*.5;
-     const shp=new T.Shape();
-     shp.moveTo(-hw+cr,-hh);shp.lineTo(hw-cr,-hh);shp.absarc(hw-cr,-hh+cr,cr,-Math.PI/2,0);shp.lineTo(hw,hh-cr);shp.absarc(hw-cr,hh-cr,cr,0,Math.PI/2);shp.lineTo(-hw+cr,hh);shp.absarc(-hw+cr,hh-cr,cr,Math.PI/2,Math.PI);shp.lineTo(-hw,-hh+cr);shp.absarc(-hw+cr,-hh+cr,cr,Math.PI,Math.PI*1.5);
-     const dg2=new T.ExtrudeGeometry(shp,{depth:H0,bevelEnabled:true,bevelThickness:RY-H0,bevelSize:bev,bevelSegments:4,steps:1,curveSegments:10});
-     dg2.rotateX(-Math.PI/2); /* shape (x,y) -> world (x, up=extrude dir, z=-y) */
-     const d=mesh(dg2,mat('#262a31',{side:T.BackSide}),0,0,zc,scene);
-     domeInfo={hw,hh,cr,zc,H0,RY,bev};
-     const lm=new T.MeshBasicMaterial({color:0xfff6dd});for(let i=0;i<18;i++){const a=i/18*Math.PI*2;mesh(new T.BoxGeometry(8,.4,2.6),lm,Math.cos(a)*(W*.95),topY+12,-L/2+Math.sin(a)*(L*.66),scene);}}
-else{const on=night||dusk,lm=new T.MeshBasicMaterial({color:on?0xfffbe8:0x9aa0a8}),pm=mat('#4d535b'),ft=on?flareTex():null;
+ if(dome){/* roof sized from the real footprint: an oval wall that clears the corner stands, then a shallow cap above the top row */
+  const xo=ex+dep+(two?d2+3:1.5),zo=L/2+ez+dep+(two?d2+3:1.5),ax=xo*1.43+4,az=zo*1.43+4,wh=topY+9,chh=Math.min(ax,az)*.42,dm=mat('#262a31',{side:T.BackSide});
+  mesh(new T.CylinderGeometry(1,1,1,48,1,true),dm,0,wh/2-.2,-L/2,scene).scale.set(ax,wh+.4,az);mesh(new T.SphereGeometry(1,48,12,0,Math.PI*2,0,Math.PI/2),mat('#2c3139',{side:T.BackSide}),0,wh,-L/2,scene).scale.set(ax,chh,az);
+  const lm=new T.MeshBasicMaterial({color:0xfff6dd});for(let i=0;i<22;i++){const a=i/22*Math.PI*2,m=mesh(new T.BoxGeometry(9,.4,2.8),lm,Math.cos(a)*ax*.62,wh+chh*Math.sqrt(1-.62*.62)-1.2,-L/2+Math.sin(a)*az*.62,scene);m.rotation.y=-a+Math.PI/2;}}
+ else{const on=night||dusk,lm=new T.MeshBasicMaterial({color:on?0xfffbe8:0x9aa0a8}),pm=mat('#4d535b'),ft=on?flareTex():null;
   for(const sx of [-1,1])for(const sz of [.1,.9]){const x=sx*(ex+dep+(two?d2+6:5)),z=-L*sz;mesh(new T.CylinderGeometry(.7,1,topY+18,8),pm,x,(topY+18)/2,z,scene);const p=mesh(new T.BoxGeometry(2,8,16),lm,x-sx*1,topY+19,z,scene);p.rotation.z=sx*.3;
    if(on){const f=new T.Sprite(new T.SpriteMaterial({map:ft,blending:T.AdditiveBlending,depthWrite:false,transparent:true,opacity:.75}));f.scale.set(70,70,1);f.position.set(x-sx*2,topY+19,z);scene.add(f);}}}
  // video board
- const jc=document.createElement('canvas');jc.width=512;jc.height=192;const jt=tex(jc);jumbo={c:jc,t:jt};
- /* phase 5 (D10): in a dome the freestanding north board + posts stood at the
-    rim with the top at topY+13.75 - outside any sane roof. Domes get the
-    centre-hung board real domed stadiums have: midfield, double-sided,
-    hangers to a crossbar under the light ring; the dome's clearance solve
-    above includes it. Open-air keeps the north board + posts. */
- const jz=dome?-L/2:-(L+ez+dep+(two?d2+4:2)),jy=dome?topY+4.75:topY+7;
- mesh(new T.BoxGeometry(34,13.5,1.4),mat('#15181d'),0,jy,jz-.8,scene);mesh(new T.PlaneGeometry(32,12),new T.MeshBasicMaterial({map:jt}),0,jy,jz,scene);
- if(dome){const mp=mesh(new T.PlaneGeometry(32,12),new T.MeshBasicMaterial({map:jt}),0,jy,jz-1.6,scene);mp.rotation.y=Math.PI;
-  for(const s of [-1,1])mesh(new T.BoxGeometry(.5,topY+13.5-(jy+6.75)+.5,.5),mat('#2b3038'),s*13,(topY+13.5+jy+6.75)/2,jz-.8,scene);
-  mesh(new T.BoxGeometry(28,.6,.6),mat('#2b3038'),0,topY+13.5,jz-.8,scene);}
- else for(const s of [-1,1])mesh(new T.BoxGeometry(1.2,jy,1.2),mat('#2b3038'),s*13,jy/2,jz-1,scene);
+ const jc=document.createElement('canvas');jc.width=512;jc.height=192;const jt=tex(jc);jumbo={c:jc,t:jt};const jz=-(L+ez+dep+(two?d2+4:2)),jy=topY+7;
+ mesh(new T.BoxGeometry(34,13.5,1.4),mat('#15181d'),0,jy,jz-.8,scene);mesh(new T.PlaneGeometry(32,12),new T.MeshBasicMaterial({map:jt}),0,jy,jz,scene);for(const s of [-1,1])mesh(new T.BoxGeometry(1.2,jy,1.2),mat('#2b3038'),s*13,jy/2,jz-1,scene);
+ stadR[1]=scene.children.length;
  if(cfg.stadGlb&&T.GLTFLoader){for(let i=c0;i<scene.children.length;i++)scene.children[i].visible=false;crowd=[];addStadium(cfg.stadGlb,home.stad.model||{},ru);}
  // surroundings (open-air only): concrete apron, asphalt ring, distant tree/building line
  if(!dome){const ow=ex+dep+(two?d2+6:5)+2,ozn=L+ez+dep+(two?d2+6:5)+2,ozs=ez+dep+(two?d2+6:5)+2,zCtr=(ozs-ozn)/2;
@@ -1404,7 +1432,7 @@ else{const on=night||dusk,lm=new T.MeshBasicMaterial({color:on?0xfffbe8:0x9aa0a8
  losM=mesh(new T.PlaneGeometry(W,.3),new T.MeshBasicMaterial({color:0x2f7bff,transparent:true,opacity:.7,depthWrite:false}),0,.04,0,scene);losM.rotation.x=-Math.PI/2;
  fdM=mesh(new T.PlaneGeometry(W,.3),new T.MeshBasicMaterial({color:0xffd60a,transparent:true,opacity:.85,depthWrite:false}),0,.04,0,scene);fdM.rotation.x=-Math.PI/2;
  ring=mesh(new T.RingGeometry(.58,.78,28),new T.MeshBasicMaterial({color:0xffe14d,transparent:true,opacity:.95,side:T.DoubleSide,depthWrite:false}),0,.05,0,scene);ring.rotation.x=-Math.PI/2;
- ballM=bake([P(new T.SphereGeometry(.15,14,10),'#6b3a1f',0,0,0,1,1,1.7),P(new T.TorusGeometry(.128,.012,4,14),'#f2f2f2',0,0,.16,1,1,1),P(new T.TorusGeometry(.128,.012,4,14),'#f2f2f2',0,0,-.16),P(new T.BoxGeometry(.02,.02,.16),'#f2f2f2',0,.15,0)],1,scene);ballM.castShadow=detail>1;
+ ballM=bake([P(new T.SphereGeometry(.098,14,10),'#6b3a1f',0,0,0,1,1,1.66),P(new T.TorusGeometry(.083,.008,4,14),'#f2f2f2',0,0,.105,1,1,1),P(new T.TorusGeometry(.083,.008,4,14),'#f2f2f2',0,0,-.105),P(new T.BoxGeometry(.014,.014,.105),'#f2f2f2',0,.098,0)],1,scene);ballM.castShadow=detail>1;
  flagM=mesh(new T.BoxGeometry(.3,.05,.24),new T.MeshBasicMaterial({color:0xffd60a}),0,-5,0,scene);flagM.visible=false;
  coin=mesh(new T.CylinderGeometry(.11,.11,.016,18),new T.MeshPhongMaterial({color:col('#e9c84a'),shininess:120}),0,-5,0,scene);coin.visible=false;
  labels=[];for(let i=0;i<6;i++){const c=document.createElement('canvas');c.width=c.height=64;const sp=new T.Sprite(new T.SpriteMaterial({map:tex(c),depthTest:false,transparent:true}));sp.scale.set(.8,.8,1);sp.visible=false;sp.userData.c=c;scene.add(sp);labels.push(sp);}
@@ -1417,7 +1445,7 @@ function addStadium(buf,m,ru){const sc=scene;try{new T.GLTFLoader().parse(buf.sl
   const longX=sz.x>sz.z,s=230/Math.max(sz.x,sz.z,.001)*(m.scale||100)/100,w=new T.Group(),p=new T.Group();o.position.set(-c.x,-box.min.y,-c.z);p.add(o);p.scale.setScalar(s);p.rotation.y=(longX?Math.PI/2:0)+(m.rot||0)*Math.PI/180;w.add(p);w.position.set(0,(m.y||0)-.08,-ru.L/2);sc.add(w);},()=>{});}catch(e){}}
 function flareTex(){const c=document.createElement('canvas');c.width=c.height=128;const x=c.getContext('2d'),g=x.createRadialGradient(64,64,0,64,64,64);g.addColorStop(0,'rgba(255,250,225,1)');g.addColorStop(.2,'rgba(255,245,200,.5)');g.addColorStop(1,'rgba(255,240,200,0)');x.fillStyle=g;x.fillRect(0,0,128,128);return new T.CanvasTexture(c);}
 function dispose(){if(!scene)return;scene.traverse(o=>{if(o.geometry&&!isShared(o.geometry))o.geometry.dispose();const m=o.material;if(m){if(m.map)m.map.dispose();m.dispose();}});mats={};scene=null;}
-function isShared(g){if(!geo)return false;for(const k in geo)if(geo[k]===g)return true;return false;}
+function isShared(g){if(g.userData&&g.userData.keep)return true;if(!geo)return false;for(const k in geo)if(geo[k]===g)return true;return false;}
 function drawJumbo(S){const TM=G.teams(),k=S.score.join('-')+S.q;if(k===jKey)return;jKey=k;const x=jumbo.c.getContext('2d');x.fillStyle='#0b0e13';x.fillRect(0,0,512,192);
  for(let i=0;i<2;i++){const t=TM[i],cx=i?384:128;x.fillStyle=t.c1;x.fillRect(i?260:8,8,244,176);Art.logo(x,t,cx-60,74,44);x.fillStyle='#fff';x.font='italic 900 92px "Barlow Condensed",Impact,sans-serif';x.textAlign='center';x.textBaseline='middle';x.fillText(S.score[i],cx+56,78);x.font='italic 800 34px "Barlow Condensed",Impact,sans-serif';x.fillText(t.abbr,cx,158);}
  jumbo.t.needsUpdate=true;}
@@ -1503,11 +1531,13 @@ function sync(dt,o){
  if(sun){const f=sun.userData.off;sun.target.position.set(cl.x,0,cl.z);sun.position.set(cl.x+f[0],f[1],cl.z+f[2]);}
  if(wx){const a=wx.p.geometry.attributes.position,arr=a.array;for(let i=0;i<wx.n;i++){arr[i*3+1]-=wx.v*dt;if(wx.v<10)arr[i*3]+=Math.sin(time+i)*dt;if(arr[i*3+1]<0)arr[i*3+1]=30;}a.needsUpdate=true;wx.p.position.set(cl.x,0,cl.z);}
  ren.render(scene,cam);}
-return {init,resize,build,sync,dispose,setDetail,preview,setMocap:v=>{mocap=!!v;clearBodies();},get mocap(){return mocap;},get mocapReady(){return CH.ready;},get mocapStatus(){return CH.st;},stadPreview,_test:()=>{const px=new T.Group();CH.obj=px;CH.tex=px;for(const [k] of CLIPS)CH.clips[k]=px;CH.clips.throw=px;CH.ready=true;clearBodies();},cheer:a=>{excite=Math.min(1,excite+a);},setCam:m=>{camMode=m;},get cam(){return camMode;},get detail(){return detail;},get ok(){return ok;}};
+return {init,resize,build,sync,dispose,setDetail,preview,stadExport,ribbonCanvas,shellCanvas,bodyTex:()=>CH.tex&&CH.tex.image,setBodyTex:im=>{if(!CH.tex)return false;CH.tex.image=im;CH.tex.needsUpdate=true;CH.texV=(CH.texV|0)+1;clearBodies();return true;},helmets:()=>HELMET_OPTS.map((o,i)=>[i,o?o.label:'Original']),_dbg:()=>({T,CH,scene,cam,ren,bodies,HELM_MOD,pvs,push}),setMocap:v=>{mocap=!!v;clearBodies();},get mocap(){return mocap;},get mocapReady(){return CH.ready;},get mocapStatus(){return CH.st;},stadPreview,_test:()=>{const px=new T.Group();CH.obj=px;CH.tex=px;for(const [k] of CLIPS)CH.clips[k]=px;CH.clips.throw=px;CH.ready=true;clearBodies();},cheer:a=>{excite=Math.min(1,excite+a);},setCam:m=>{camMode=m;},get cam(){return camMode;},get detail(){return detail;},get ok(){return ok;}};
 })();
+
 
 </script>
 <script>
+
 'use strict';
 /* Menus, editors, franchise hub, newspaper, in-game HUD, input and sound. */
 const UI=(()=>{
@@ -1602,7 +1632,7 @@ TAB.stand=()=>{let h='';
   const ci=view.conf==null?L.teams[L.userTid].conf:view.conf;h+=`<div class="card"><h3>Conference standings</h3><select data-c="conf">${L.confs.map((c,i)=>`<option value="${i}"${i===ci?' selected':''}>${esc(c.name)}</option>`).join('')}</select>${stTable(L.teams.filter(t=>t.conf===ci).sort(E.confSort),true)}</div>`;}
  else L.confs.forEach((c,ci)=>{h+=`<div class="card"><h3>${esc(c.name)}</h3>`;c.divs.forEach((d,di)=>{h+=`<h4>${esc(d)}</h4>`+stTable(L.teams.filter(t=>t.conf===ci&&t.div===di).sort(E.stSort));});h+='</div>';});
  return h;};
-function rosterTable(t,fr){const d=E.depth(t);let h=`<div class="card"><div class="row"><button class="chip" data-a="autodepth">Auto-sort depth chart</button><button class="chip" data-a="addplayer">+ Add player</button></div><p class="dim">${t.roster.length} players · tap a player to edit name, number, ratings, body and equipment. The top players at each position start.</p><table class="tb ros"><tr><th>Pos</th><th>#</th><th class="l">Name</th><th>${t.roster[0]&&t.roster[0].yr?'Yr':'Age'}</th><th>OVR</th><th>POT</th><th></th></tr>`;
+function rosterTable(t,fr){const d=E.depth(t);let h=`<div class="card"><div class="row"><button class="chip" data-a="autodepth">Auto-sort depth chart</button><button class="chip" data-a="addplayer">+ Add player</button><button class="chip" data-a="xroster">⬇ Roster (.xlsx)</button><button class="chip" data-a="iroster">⬆ Import roster (.xlsx)</button></div><p class="dim">${t.roster.length} players · tap a player to edit name, number, ratings, body and equipment. The top players at each position start.</p><table class="tb ros"><tr><th>Pos</th><th>#</th><th class="l">Name</th><th>${t.roster[0]&&t.roster[0].yr?'Yr':'Age'}</th><th>OVR</th><th>POT</th><th></th></tr>`;
  for(const pos of E.POS)d[pos].forEach((p,i)=>{h+=`<tr class="${i<E.STARTERS[pos]?'st':''}" data-a="pl" data-v="${p.id}"><td>${pos}${i<E.STARTERS[pos]?'':'<small>'+(i+1)+'</small>'}</td><td>${p.num}</td><td class="l">${esc(p.n)}</td><td>${p.yr?yrN[p.yr]:p.age}</td><td><b>${p.ovr}</b></td><td>${p.pot}</td><td>${i>0?`<button class="mini" data-a="depthup" data-v="${p.id}">▲</button>`:''}</td></tr>`;});
  return h+'</table></div>';}
 TAB.roster=()=>{const tid=view.rt==null?L.userTid:view.rt,t=L.teams[tid];return `<div class="card"><label>Team</label><select data-c="rt">${L.teams.map(x=>`<option value="${x.id}"${x.id===tid?' selected':''}>${esc(x.name)}</option>`).join('')}</select>${L.mode==='pro'?`<p class="dim">Payroll $${E.payroll(t)}M of $${L.cap}M cap</p>`:''}</div>`+rosterTable(t,true);};
@@ -1635,14 +1665,23 @@ function offseason(){const O=L.off,u=L.teams[L.userTid],pro=L.mode==='pro';let h
 
 /* ---------- team + player editors ---------- */
 function editTeam(){if(scr==='builder')return EXT[view.bt||0];if(tab==='roster')return L.teams[view.rt==null?L.userTid:view.rt];return L.teams[view.et==null?L.userTid:view.et];}
-function teamEditor(t){const col=(k,n)=>`<label class="col"><input type="color" value="${getK(t,k)}" data-c="tcol" data-k="${k}"><span>${n}</span></label>`,txt=(k,n,max)=>`<label>${n}</label><input type="text" maxlength="${max}" value="${esc(getK(t,k))}" data-c="ttxt" data-k="${k}">`;
+function teamEditor(t){const ksl=(k,n,v,max)=>`<div class="sl"><span>${n}</span><input type="range" min="0" max="${max}" step="2" value="${Math.round(v*100)}" data-c="kset" data-k="${k}"><b id="ks_${k}">${Math.round(v*100)}%</b></div>`,col=(k,n)=>`<label class="col"><input type="color" value="${getK(t,k)}" data-c="tcol" data-k="${k}"><span>${n}</span></label>`,txt=(k,n,max)=>`<label>${n}</label><input type="text" maxlength="${max}" value="${esc(getK(t,k))}" data-c="ttxt" data-k="${k}">`;
  return `<div class="card"><h3>Identity</h3>${txt('name','City / school',22)}${txt('mascot','Nickname',18)}${txt('abbr','Abbreviation',3)}
  <h3>Colors</h3><div class="cols6">${col('c1','Primary')}${col('c2','Secondary')}${col('c3','Logo text')}${col('helmet','Helmet')}${col('mask','Facemask')}${col('pants','Pants')}${col('away','Away jersey')}</div>
  <div class="kits"><div class="center"><canvas id="t3d" class="p3d" width="320" height="400"></canvas><div class="row center">${chips('khome',view.khome===0?0:1,[[1,'Home'],[0,'Away']])}</div></div><canvas data-paint="logo" width="150" height="150"></canvas></div>
  <h3>Logo</h3><div class="row">${chips('tshape',t.logo.shape,E.SHAPES.map(s=>[s,s]))}</div>${txt('logo.txt','Logo letters',3)}
  <div class="row"><button class="chip" data-a="implogo">⬆ Import logo image from device</button>${t.logo.img?'<button class="chip" data-a="clrlogo">Remove imported logo</button>':''}</div>
+ <h3>Helmet</h3><label>Style (players can override it in Edit Player)</label><div class="row">${chips('khelm',(t.kit||{}).helm==null?1:(t.kit||{}).helm,[[1,'Speed'],[2,'Cage'],[3,'Flex'],[4,'Ridge'],[0,'Original']])}</div>
+ <label>Shell finish</label><div class="row">${chips('kfin',(t.kit||{}).hfin|0,[[0,'Glossy'],[1,'Matte'],[2,'Chrome']])}</div><label>Facemask finish</label><div class="row">${chips('kmfin',(t.kit||{}).mfin|0,[[0,'Glossy'],[1,'Matte'],[2,'Chrome']])}</div>
+ ${ksl('hl','Helmet logo size',(t.kit||{}).hl==null?.42:(t.kit||{}).hl,160)}<p class="dim">0% hides it. Around 40% is a normal side decal; 100% and up wraps the artwork over the whole shell.</p>
+ <div class="row"><button class="chip" data-a="kimg" data-k="hImg">⬆ Paste a different image on the helmet</button>${(t.kit||{}).hImg?'<button class="chip" data-a="kclr" data-k="hImg">Use team logo</button>':''}</div>
+ <h3>Jersey and pants logos</h3>${ksl('jl','Sleeve logo size',(t.kit||{}).jl||0,200)}<div class="row"><button class="chip" data-a="kimg" data-k="jImg">⬆ Jersey logo image</button>${(t.kit||{}).jImg?'<button class="chip" data-a="kclr" data-k="jImg">Use team logo</button>':''}</div>
+ ${ksl('pl','Pants logo size',(t.kit||{}).pl||0,200)}<div class="row"><button class="chip" data-a="kimg" data-k="pImg">⬆ Pants logo image</button>${(t.kit||{}).pImg?'<button class="chip" data-a="kclr" data-k="pImg">Use team logo</button>':''}</div>
+ <h3>Textures and team files</h3><p class="dim">Save the artwork as image files to edit elsewhere, then bring it back with the import buttons. A team file carries everything for this team: colors, logos, kit, field and stadium settings.</p>
+ <div class="row"><button class="chip" data-a="xlogo">⬇ Logo PNG</button><button class="chip" data-a="xshell">⬇ Helmet wrap PNG</button><button class="chip" data-a="xfield">⬇ Field PNG</button><button class="chip" data-a="xbody">⬇ Player skin PNG</button></div>
+ <div class="row"><button class="chip" data-a="ibody">⬆ Player skin PNG</button><button class="chip" data-a="cbody">Reset player skin</button><button class="chip" data-a="xteam">⬇ Team file</button><button class="chip" data-a="iteam">⬆ Team file</button></div>
  <h3>Helmet model</h3><p class="dim">${t.helmetGlb?'A custom 3D helmet is loaded for this team.':'Players wear the built-in helmet in your colors.'} You can import a .glb model from your device; it is scaled to fit and used in games.</p><div class="row"><button class="chip" data-a="imphelm">⬆ Import helmet (.glb)</button>${t.helmetGlb?'<button class="chip" data-a="clrhelm">Remove</button>':''}</div></div>
- <div class="card"><h3>Field</h3><div class="cols6">${col('field.turf','Turf')}${col('field.ez','End zone')}</div><label>Turf pattern</label><div class="row">${chips('tpat',t.field.pat,[['stripes','Mowed stripes'],['checker','Checkerboard'],['plain','Plain']])}</div>
+ <div class="card"><h3>Field</h3><div class="cols6">${col('field.turf','Turf')}${col('field.ez','End zone')}<label class="col"><input type="color" value="${t.field.pad||t.c1}" data-c="tcol" data-k="field.pad"><span>Goal post pad</span></label></div><label>Goal post pads</label><div class="row">${chips('tpadon',t.field.padOn===0?0:1,[[1,'Pad on posts'],[0,'No pad']])}</div><label>Turf pattern</label><div class="row">${chips('tpat',t.field.pat,[['stripes','Mowed stripes'],['checker','Checkerboard'],['plain','Plain']])}</div>
  <label>End zone style</label><div class="row">${chips('tez',t.field.ezStyle,[['solid','Solid'],['diag','Diagonal'],['checker','Checkerboard']])}</div>${txt('field.ezTxt','End zone lettering',18)}
  <label>Midfield logo</label><div class="row">${chips('tmid',t.field.mid,[[1,'On'],[0,'Off']])}</div>
  <div class="row"><button class="chip" data-a="impturf">⬆ Import field texture from device</button>${t.field.img?`<button class="chip" data-a="clrturf">Remove texture</button>`:''}</div>
@@ -1654,11 +1693,14 @@ function teamEditor(t){const col=(k,n)=>`<label class="col"><input type="color" 
  <label>Press box</label><div class="row">${chips('tpress',t.stad.press||'w',[['none','None'],['w','West side'],['e','East side'],['both','Both sides']])}</div><label>Size</label><div class="row">${chips('tsize',t.stad.size,[[1,'Small'],[2,'Medium'],[3,'Large, two decks'],[4,'Massive bowl']])}</div>
  <label>Roof</label><div class="row">${chips('troof',t.stad.roof,[[0,'Open air'],[1,'Dome']])}</div><label>Kickoff time</label><div class="row">${chips('ttime',t.stad.time,[['day','Day'],['dusk','Dusk'],['night','Night']])}</div>
  <label>Weather</label><div class="row">${chips('twx',t.stad.wx,[['clear','Clear'],['rain','Rain'],['snow','Snow']])}</div>
+ <h3>Stadium export and import</h3><p class="dim">The 3D file holds the field, goal posts and pads, stands, boards, roof and towers built from the settings above (not the crowd). Edit it in a 3D program and bring it back with "Import stadium model". The ribbon board is the LED strip around the stands, 1024 × 64.</p>
+ <div class="row"><button class="chip" data-a="xstad">⬇ Stadium 3D model (.glb)</button><button class="chip" data-a="xrib">⬇ Ribbon board PNG</button><button class="chip" data-a="irib">⬆ Ribbon board image</button>${t.stad.rib?'<button class="chip" data-a="crib">Remove ribbon image</button>':''}</div>
+ <div class="row"><button class="chip" data-a="xsset">⬇ Stadium settings file</button><button class="chip" data-a="isset">⬆ Stadium settings file</button></div>
  <h3>Stadium model from your device</h3><p class="dim">${t.stad.model?`Loaded: ${esc(t.stad.model.name)}${STAD[t.stad.model.id]?'':' — the file is no longer stored in this browser, import it again'}. It replaces the built-in stands; the field, goalposts and players stay.`:'Import a full-quality stadium as a .glb file or a Sketchfab-style .zip. The file stays on this device and is not uploaded, so there is no size cap beyond what the device can hold in memory.'}</p>
  <div class="row"><button class="chip" data-a="impstad">⬆ Import stadium model</button>${t.stad.model?'<button class="chip" data-a="clrstad">Remove</button>':''}</div>
  ${t.stad.model?`<div class="sl"><span>Size</span><input type="range" min="30" max="300" value="${t.stad.model.scale}" data-c="sstad" data-k="scale"><b id="ss_scale">${t.stad.model.scale}%</b></div><div class="sl"><span>Height</span><input type="range" min="-30" max="30" step="0.5" value="${t.stad.model.y}" data-c="sstad" data-k="y"><b id="ss_y">${t.stad.model.y}</b></div><label>Rotation</label><div class="row">${chips('srot',t.stad.model.rot,[[0,'0°'],[90,'90°'],[180,'180°'],[270,'270°']])}</div><p class="dim">The model is auto-fitted around the field. If it does not line up, adjust these and start a game to check.</p>`:''}</div>`;}
 function findP(t,id){return t.roster.find(p=>p.id===+id);}
-function playerModal(){if(view.pid==null)return'';const t=editTeam(),p=findP(t,view.pid);if(!p)return'';const tg=(k,n,opts)=>`<label>${n}</label><div class="row">${opts.map(o=>`<button class="chip${(p.g[k]||0)===o[0]?' on':''}" data-a="pgear" data-k="${k}" data-v="${o[0]}">${o[1]}</button>`).join('')}</div>`;
+function playerModal(){if(view.pid==null)return'';const t=editTeam(),p=findP(t,view.pid);if(!p)return'';const tg=(k,n,opts)=>`<label>${n}</label><div class="row">${opts.map(o=>`<button class="chip${(p.g[k]==null?(k==='helm'?-1:0):p.g[k])===o[0]?' on':''}" data-a="pgear" data-k="${k}" data-v="${o[0]}">${o[1]}</button>`).join('')}</div>`;
  return `<div class="modal"><div class="mbox"><div class="mhead"><b>${esc(p.pos)} #${p.num} ${esc(p.n)}</b><span class="ovr" id="povr">${p.ovr}</span><button class="mini" data-a="plclose">Done</button></div><div class="mbody">
  <div class="two"><div class="center"><canvas id="p3d" class="p3d" width="320" height="400"></canvas><small class="dim">Drag to rotate</small></div><div><label>Name</label><input type="text" maxlength="26" value="${esc(p.n)}" data-c="pf" data-k="n">
  <label>Number</label><input type="number" min="0" max="99" value="${p.num}" data-c="pf" data-k="num"><label>Position</label><select data-c="pf" data-k="pos">${E.POS.map(x=>`<option${x===p.pos?' selected':''}>${x}</option>`).join('')}</select></div></div>
@@ -1667,7 +1709,7 @@ function playerModal(){if(view.pid==null)return'';const t=editTeam(),p=findP(t,v
  ${BODY.map(([k,n])=>{const v=Math.round(((p.b||{})[k]==null?1:p.b[k])*100);return `<div class="sl"><span>${n}</span><input type="range" min="50" max="160" value="${v}" data-c="pbody" data-k="${k}"><b id="pb_${k}">${v}%</b></div>`;}).join('')}
  <p class="dim">Each slider is relative to an average build; the figure is then scaled so the player stands exactly the chosen height. This changes how the player looks in games, not their ratings.</p>
  <label>Skin tone</label><div class="row">${Art.SKIN.map((c,i)=>`<button class="sw${p.sk===i?' on':''}" style="background:${c}" data-a="pskin" data-v="${i}"></button>`).join('')}</div>
- <h3>Equipment</h3>${tg('helm','Helmet',[[0,'Stock'],[1,'Bills SpeedFlex'],[2,'Midnight Navy'],[3,'SpeedFlex Style'],[4,'Ridged Classic']])}${tg('v','Visor',[[0,'None'],[1,'Dark visor']])}${tg('sl','Arm sleeves',[[0,'Bare arms'],[1,'Sleeves']])}${tg('gl','Gloves',[[0,'White'],[1,'Team color'],[2,'Black']])}${tg('cl','Cleats',[[0,'White'],[1,'Black'],[2,'Team color']])}${tg('so','Socks',[[0,'Low'],[1,'High, team color'],[2,'High, white']])}${tg('wb','Wristbands',[[0,'None'],[1,'White'],[2,'Team color']])}${tg('tw','Towel',[[0,'None'],[1,'Towel']])}${tg('bp','Back plate',[[0,'None'],[1,'Back plate']])}${tg('h','Hair',[[0,'Short'],[1,'Long, out the back']])}
+ <h3>Equipment</h3>${tg('helm','Helmet',[[-1,'Team default'],[1,'Speed'],[2,'Cage'],[3,'Flex'],[4,'Ridge'],[0,'Original']])}${tg('v','Visor',[[0,'None'],[1,'Dark visor']])}${tg('sl','Arm sleeves',[[0,'Bare arms'],[1,'Sleeves']])}${tg('gl','Gloves',[[0,'White'],[1,'Team color'],[2,'Black']])}${tg('cl','Cleats',[[0,'White'],[1,'Black'],[2,'Team color']])}${tg('so','Socks',[[0,'Low'],[1,'High, team color'],[2,'High, white']])}${tg('wb','Wristbands',[[0,'None'],[1,'White'],[2,'Team color']])}${tg('tw','Towel',[[0,'None'],[1,'Towel']])}${tg('bp','Back plate',[[0,'None'],[1,'Back plate']])}${tg('h','Hair',[[0,'Short'],[1,'Long, out the back']])}
  <h3>Ratings</h3>${E.ATTR.map(a=>`<div class="sl${E.KEY[p.pos][a]?' key':''}"><span>${E.ATTRN[a]}</span><input type="range" min="20" max="99" value="${p.a[a]}" data-c="pattr" data-k="${a}"><b id="pa_${a}">${p.a[a]}</b></div>`).join('')}
  <div class="row"><button class="chip danger" data-a="prelease">Release player</button></div></div></div></div>`;}
 
@@ -1718,14 +1760,138 @@ const ACT={
  prelease:()=>{const t=editTeam(),p=findP(t,view.pid);if(t.roster.filter(x=>x.pos===p.pos).length<=E.STARTERS[p.pos])return toast('You need at least '+E.STARTERS[p.pos]+' at '+p.pos+'.');t.roster=t.roster.filter(x=>x!==p);view.pid=null;commit();render();},
  ppre:d=>{const p=findP(editTeam(),view.pid),P={avg:null,ds:[51,120,{ua:.68,fa:.7,th:.62,ca:.66,to:1,nk:.9,hd:1.12,ha:.85,ft:.88}],dp:[48,85,{hd:1.06}],gi:[91,400,{ua:1.08,fa:1.12,th:1.08,ca:1.12,to:.97,nk:1.1,hd:1,ha:1.3,ft:1.3}]}[d.v];if(!P)delete p.b;else{p.ht=P[0];p.wt=P[1];p.b=Object.assign({},P[2]);}commit();render();},
  pskin:d=>{findP(editTeam(),view.pid).sk=+d.v;commit();render();},pgear:d=>{findP(editTeam(),view.pid).g[d.k]=+d.v;commit();render();},
- tshape:d=>{editTeam().logo.shape=d.v;commit();render();},tpat:d=>{editTeam().field.pat=d.v;commit();render();},tez:d=>{editTeam().field.ezStyle=d.v;commit();render();},tmid:d=>{editTeam().field.mid=+d.v;commit();render();},tfull:d=>{editTeam().field.full=+d.v;commit();render();},
+ xstad:()=>{toast('Building the stadium file…');V.stadExport(editTeam(),E.RULES[view.prules||'pro'],buf=>{if(!buf)return toast('The stadium could not be exported on this device.');const nm=(editTeam().abbr||'team')+'-stadium';if(NOGLB&&window.fflate){const z={};z[nm+'.glb']=new Uint8Array(buf);saveBlob(new Blob([fflate.zipSync(z,{level:1})],{type:'application/zip'}),nm+'.zip');}else saveBlob(new Blob([buf],{type:'model/gltf-binary'}),nm+'.glb');});},
+ xrib:()=>saveCanvas(V.ribbonCanvas(editTeam()),'ribbon'),irib:()=>pickFile('image/*',f=>Art.importImage(f,1024,false,u=>{if(!u)return toast('That image could not be read.');editTeam().stad.rib=u;Art.ready([u],()=>{commit();render();});})),crib:()=>{delete editTeam().stad.rib;commit();render();},
+ xsset:()=>{const st=JSON.parse(JSON.stringify(editTeam().stad));delete st.model;saveBlob(new Blob([JSON.stringify({gl:'stadium',v:1,stad:st})],{type:'application/json'}),(editTeam().abbr||'team')+'.glstadium.json');},
+ isset:()=>pickFile('.json,application/json',f=>{const fr=new FileReader();fr.onload=()=>{try{const o=JSON.parse(fr.result);if(!o||o.gl!=='stadium'||!o.stad)throw 0;const t=editTeam(),m=t.stad.model;t.stad=o.stad;delete t.stad.model;if(m)t.stad.model=m;Art.ready([t.stad.rib],()=>{commit();render();toast('Stadium settings imported.');});}catch(e){toast('That is not a stadium file from this game.');}};fr.readAsText(f);}),
+ khelm:d=>{KT().helm=+d.v;commit();render();},kfin:d=>{KT().hfin=+d.v;commit();render();},kmfin:d=>{KT().mfin=+d.v;commit();render();},
+ kimg:d=>pickFile('image/*',f=>Art.importImage(f,256,false,u=>{if(!u)return toast('That image could not be read.');KT()[d.k]=u;Art.ready([u],()=>{commit();render();});})),kclr:d=>{delete KT()[d.k];commit();render();},
+ xlogo:()=>saveCanvas(Art.logoURL(editTeam(),512),'logo'),xshell:()=>saveCanvas(V.shellCanvas(editTeam()),'helmet-wrap'),
+ xfield:()=>{const t=editTeam(),ru=E.RULES[view.prules||'pro'],c=document.createElement('canvas');c.width=1024;c.height=2048;try{Art.field(c,t,ru);}catch(e){}saveCanvas(c,'field');},
+ xbody:()=>{const im=V.bodyTex();if(!im)return toast('The player model has not finished loading yet.');const c=document.createElement('canvas');c.width=im.width;c.height=im.height;c.getContext('2d').drawImage(im,0,0);saveCanvas(c,'player-skin');},
+ ibody:()=>pickFile('image/*',f=>Art.importImage(f,1024,false,u=>{if(!u)return toast('That image could not be read.');setBody(u,true);})),cbody:()=>{IDB.del('bodytex');delete STAD.bodytex;toast('Player skin reset. It applies the next time the game is opened.');},
+ xteam:()=>{const t=editTeam(),o=JSON.parse(JSON.stringify(t,(k,v)=>k==='roster'||k[0]==='_'?undefined:v));saveBlob(new Blob([JSON.stringify({gl:'team',v:1,team:o})],{type:'application/json'}),(t.abbr||'team')+'.glteam.json');},
+ xroster:()=>{const t=editTeam();saveBlob(rosterXlsx(t),(t.abbr||'team')+'-roster.xlsx');toast('Roster saved as .xlsx — one row per player. Edit it in Excel or Sheets, then import it back for this team.');},
+ iroster:()=>{pickFile('.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',f=>{if(!f)return;const rd=new FileReader();rd.onload=()=>{try{const r=importRoster(editTeam(),rd.result);if(r.err)toast(r.err);else{commit();render();toast(r.msg);}}catch(e){toast('Could not import that file: '+(e&&e.message||e));}};rd.onerror=()=>toast('Could not read that file.');rd.readAsArrayBuffer(f);});},
+ iteam:()=>pickFile('.json,application/json',f=>{const fr=new FileReader();fr.onload=()=>{try{const o=JSON.parse(fr.result);if(!o||o.gl!=='team'||!o.team)throw 0;const t=editTeam(),n=o.team;for(const k of ['name','mascot','abbr','c1','c2','c3','helmet','mask','pants','away','logo','field','kit','helmetGlb'])if(n[k]!=null)t[k]=n[k];if(n.stad){const m=t.stad.model;t.stad=n.stad;delete t.stad.model;if(m)t.stad.model=m;}Art.ready([t.logo.img,t.field.img,(t.kit||{}).hImg,(t.kit||{}).jImg,(t.kit||{}).pImg],()=>{commit();render();toast('Team file imported.');});}catch(e){toast('That is not a team file from this game.');}};fr.readAsText(f);}),
+ tshape:d=>{editTeam().logo.shape=d.v;commit();render();},tpat:d=>{editTeam().field.pat=d.v;commit();render();},tez:d=>{editTeam().field.ezStyle=d.v;commit();render();},tmid:d=>{editTeam().field.mid=+d.v;commit();render();},tfull:d=>{editTeam().field.full=+d.v;commit();render();},tpadon:d=>{editTeam().field.padOn=+d.v;commit();render();},
  tsize:d=>{editTeam().stad.size=+d.v;commit();render();},troof:d=>{editTeam().stad.roof=+d.v;commit();render();},ttime:d=>{editTeam().stad.time=d.v;commit();render();},twx:d=>{editTeam().stad.wx=d.v;commit();render();},
  implogo:()=>pickFile('image/*',f=>Art.importImage(f,256,false,u=>{if(!u)return toast('That image could not be read.');editTeam().logo.img=u;commit();render();})),clrlogo:()=>{editTeam().logo.img='';commit();render();},
  impturf:()=>pickFile('image/*',f=>Art.importImage(f,768,true,u=>{if(!u)return toast('That image could not be read.');editTeam().field.img=u;commit();render();})),clrturf:()=>{const t=editTeam();t.field.img='';t.field.full=0;commit();render();},
  imphelm:()=>pickFile('.glb,model/gltf-binary',f=>{if(f.size>1.5e6)return toast('Helmet file is too large — keep it under 1.5 MB.');const fr=new FileReader();fr.onload=()=>{editTeam().helmetGlb=fr.result;commit();render();toast('Helmet model imported.');};fr.readAsDataURL(f);}),clrhelm:()=>{delete editTeam().helmetGlb;commit();render();}
 };
+const NOGLB=!!(window.claude&&typeof window.claude.use==='function');
+function KT(){const t=editTeam();return t.kit||(t.kit={});}
+function saveBlob(b,name){if(window.claude&&typeof window.claude.use==='function'){window.claude.use('downloads').then(d=>d?d.save({filename:name,data:b}).catch(e=>{if(!e||e.code!=='declined')toast('Could not save that file here.');}):saveLink(b,name)).catch(()=>saveLink(b,name));return;}saveLink(b,name);}
+function saveLink(b,name){const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},800);}
+function saveCanvas(c,name){try{c.toBlob(b=>{if(b)saveBlob(b,((editTeam()||{}).abbr||'team')+'-'+name+'.png');else toast('Could not make that image.');},'image/png');}catch(e){toast('Could not make that image.');}}
+function setBody(u,store){const im=new Image();im.onload=()=>{if(V.setBodyTex(im)){if(store){STAD.bodytex=u;IDB.put('bodytex',u);toast('Player skin imported.');}}else setTimeout(()=>setBody(u,store),1500);};im.src=u;}
 function commit(){const t=editTeam();if(t){delete t._ovr;delete t._lgk;}if(scr==='builder')saveEx();else save();}
 function pickFile(accept,cb){fileCb=cb;fi.value='';fi.accept=accept;fi.click();}
+/*XL_BEGIN*/
+/* ---- roster .xlsx: self-contained writer/reader (stored zip, no libraries).
+   Sheet "Team" carries the id/name of the team the file belongs to; sheet
+   "Roster" holds one row per player with every Edit Player field. ---- */
+const XLCOLS=[['id','ID'],['n','Name'],['pos','Pos'],['num','Number'],['age','Age'],['yr','Yr'],['ht','Height (in)'],['wt','Weight (lb)'],['sk','Skin'],['ovr','OVR'],['pot','POT'],
+ ...E.ATTR.map(a=>['a.'+a,a.toUpperCase()]),
+ ['g.helm','Helmet'],['g.v','Visor'],['g.sl','Sleeves'],['g.gl','Gloves'],['g.cl','Cleats'],['g.so','Socks'],['g.wb','Wristbands'],['g.tw','Towel'],['g.bp','Back plate'],['g.h','Hair'],
+ ...BODY.map(([k,n])=>['b.'+k,n+' %'])];
+const XLGEAR={'g.helm':[-1,4],'g.v':[0,1],'g.sl':[0,1],'g.gl':[0,2],'g.cl':[0,2],'g.so':[0,2],'g.wb':[0,2],'g.tw':[0,1],'g.bp':[0,1],'g.h':[0,1]};
+const xlgv=(o,k)=>k.split('.').reduce((x,y)=>x==null?undefined:x[y],o);
+const xlEsc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+function xlColName(i){let s='',n=i+1;while(n>0){s=String.fromCharCode(65+(n-1)%26)+s;n=Math.floor((n-1)/26);}return s;}
+function xlSheetXml(rows){let x='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>';
+ rows.forEach((row,ri)=>{x+='<row r="'+(ri+1)+'">';row.forEach((v,ci)=>{if(v===null||v===undefined||v==='')return;const ref=xlColName(ci)+(ri+1);x+=typeof v==='number'?'<c r="'+ref+'"><v>'+v+'</v></c>':'<c r="'+ref+'" t="inlineStr"><is><t xml:space="preserve">'+xlEsc(v)+'</t></is></c>';});x+='</row>';});
+ return x+'</sheetData></worksheet>';}
+const XLCRCT=(()=>{const t=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0;}return t;})();
+function xlCrc(u){let c=0xFFFFFFFF;for(let i=0;i<u.length;i++)c=XLCRCT[(c^u[i])&255]^(c>>>8);return (c^0xFFFFFFFF)>>>0;}
+function xlZip(files){const enc=new TextEncoder(),parts=[],cd=[];let off=0;
+ for(const [name,data] of files){const nb=enc.encode(name),crc=xlCrc(data),lh=new DataView(new ArrayBuffer(30));
+  lh.setUint32(0,0x04034b50,true);lh.setUint16(4,20,true);lh.setUint16(6,0x0800,true);lh.setUint32(14,crc,true);lh.setUint32(18,data.length,true);lh.setUint32(22,data.length,true);lh.setUint16(26,nb.length,true);
+  parts.push(new Uint8Array(lh.buffer),nb,data);
+  const ch=new DataView(new ArrayBuffer(46));ch.setUint32(0,0x02014b50,true);ch.setUint16(4,20,true);ch.setUint16(6,20,true);ch.setUint16(8,0x0800,true);ch.setUint32(16,crc,true);ch.setUint32(20,data.length,true);ch.setUint32(24,data.length,true);ch.setUint16(28,nb.length,true);ch.setUint32(42,off,true);
+  cd.push(new Uint8Array(ch.buffer),nb);off+=30+nb.length+data.length;}
+ let cdSize=0;for(const p of cd)cdSize+=p.length;const en=new DataView(new ArrayBuffer(22));en.setUint32(0,0x06054b50,true);en.setUint16(8,files.length,true);en.setUint16(10,files.length,true);en.setUint32(12,cdSize,true);en.setUint32(16,off,true);
+ return new Blob([...parts,...cd,new Uint8Array(en.buffer)],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});}
+function rosterXlsx(t){const enc=new TextEncoder();
+ const teamRows=[['Gridiron Legends roster file'],['Team ID',t.id],['Team name',t.name],['Abbr',t.abbr||''],['Players',t.roster.length]];
+ const rows=[XLCOLS.map(c=>c[1])];
+ for(const p of t.roster)rows.push(XLCOLS.map(([k])=>{const v=xlgv(p,k);if(k.startsWith('b.'))return v==null?null:Math.round(v*100);if(k==='g.helm')return v==null?-1:v;if(k==='yr')return v?v:null;return v===undefined?null:v;}));
+ const ct='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>';
+ const rels='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>';
+ const wb='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Team" sheetId="1" r:id="rId1"/><sheet name="Roster" sheetId="2" r:id="rId2"/></sheets></workbook>';
+ const wrels='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/></Relationships>';
+ return xlZip([['[Content_Types].xml',enc.encode(ct)],['_rels/.rels',enc.encode(rels)],['xl/workbook.xml',enc.encode(wb)],['xl/_rels/workbook.xml.rels',enc.encode(wrels)],['xl/worksheets/sheet1.xml',enc.encode(xlSheetXml(teamRows))],['xl/worksheets/sheet2.xml',enc.encode(xlSheetXml(rows))]]);}
+function xlUnzip(buf){if(window.fflate&&window.fflate.unzipSync){const m=window.fflate.unzipSync(new Uint8Array(buf)),o={};for(const k in m)o[k]=m[k];return o;}
+ const u=new Uint8Array(buf),dv=new DataView(buf),dec=new TextDecoder(),o={};let i=0;
+ while(i+30<=u.length&&dv.getUint32(i,true)===0x04034b50){const method=dv.getUint16(i+8,true),cs=dv.getUint32(i+18,true),nl=dv.getUint16(i+26,true),el=dv.getUint16(i+28,true),name=dec.decode(u.subarray(i+30,i+30+nl)),st=i+30+nl+el;
+  if(method!==0)throw new Error('that .xlsx is compressed and the game libraries are not loaded yet — try again in a moment');
+  o[name]=u.subarray(st,st+cs);i=st+cs;}
+ if(!Object.keys(o).length)throw new Error('not an .xlsx file');return o;}
+const xlDec=s=>String(s).replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&apos;/g,"'").replace(/&#(\d+);/g,(x,n)=>String.fromCharCode(+n)).replace(/&amp;/g,'&');
+function xlParseSheet(xml,shared){const rows=[],rre=/<row[^>]*>([\s\S]*?)<\/row>/g;let m;
+ while((m=rre.exec(xml))){const cells={},cre=/<c\s+([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g;let cm;
+  while((cm=cre.exec(m[1]))){const at=cm[1],inner=cm[2]||'',rm=/r="([A-Z]+)\d+"/.exec(at);if(!rm)continue;let ci=0;for(const ch of rm[1])ci=ci*26+(ch.charCodeAt(0)-64);ci--;
+   const tm=/t="(\w+)"/.exec(at);let val=null;
+   if(tm&&tm[1]==='inlineStr'){const im=/<t[^>]*>([\s\S]*?)<\/t>/.exec(inner);val=im?xlDec(im[1]):'';}
+   else if(tm&&tm[1]==='s'){const vm=/<v>([\s\S]*?)<\/v>/.exec(inner);val=vm?shared[+vm[1]]:null;}
+   else{const vm=/<v>([\s\S]*?)<\/v>/.exec(inner);if(vm)val=tm&&tm[1]==='str'?xlDec(vm[1]):(vm[1]===''?null:+vm[1]);}
+   if(val!==null&&val!==undefined)cells[ci]=val;}
+  rows.push(cells);}
+ return rows;}
+function xlRead(buf){const files=xlUnzip(buf),dec=new TextDecoder(),txt=n=>files[n]?dec.decode(files[n]):'';
+ let shared=[];if(files['xl/sharedStrings.xml'])shared=[...txt('xl/sharedStrings.xml').matchAll(/<si>([\s\S]*?)<\/si>/g)].map(m=>xlDec([...m[1].matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map(x=>x[1]).join('')));
+ const relMap={};for(const m of txt('xl/_rels/workbook.xml.rels').matchAll(/Id="([^"]+)"[^>]*Target="([^"]+)"/g))relMap[m[1]]=m[2];
+ const sheets={};for(const m of txt('xl/workbook.xml').matchAll(/<sheet[^>]*name="([^"]+)"[^>]*r:id="([^"]+)"/g)){let tgt=relMap[m[2]];if(!tgt)continue;tgt=tgt.replace(/^\//,'');if(tgt.indexOf('xl/')!==0)tgt='xl/'+tgt;const f=files[tgt];if(f)sheets[m[1]]=xlParseSheet(dec.decode(f),shared);}
+ return sheets;}
+/* validate the whole sheet first; only then rebuild the roster (on a copy) */
+function importRoster(t,buf){
+ const sheets=xlRead(buf),TR=sheets['Team'],R=sheets['Roster'];
+ if(!R||R.length<2)return{err:'That file has no Roster sheet with players in it.'};
+ let fid=null,fname=null;
+ if(TR)for(const row of TR){const k=String(row[0]==null?'':row[0]).toLowerCase();if(k.indexOf('team id')===0)fid=+row[1];if(k.indexOf('team name')===0)fname=String(row[1]==null?'':row[1]);}
+ if(fid===null||isNaN(fid)||fid!==t.id||(fname&&fname!==t.name))return{err:'That roster belongs to '+(fname||('team #'+fid))+'. Open that team and import it there — nothing was changed.'};
+ const head=R[0],colOf={},norm=s=>String(s).toLowerCase().replace(/[^a-z0-9]/g,'');
+ const alias={'ht':['heightin','height'],'wt':['weightlb','weight'],'num':['number','jersey'],'n':['playername'],'pos':['position'],'sk':['skintone'],'yr':['year'],'ovr':['overall'],'pot':['potential'],'id':['playerid']};
+ for(const [k,label] of XLCOLS){const wants=new Set([norm(label),norm(k)]);for(const a of alias[k]||[])wants.add(a);
+  for(const ci in head)if(wants.has(norm(head[ci]))){colOf[k]=+ci;break;}}
+ if(colOf['n']==null||colOf['pos']==null)return{err:'That Roster sheet is missing its Name or Pos column — nothing was changed.'};
+ const num=(row,k)=>{const ci=colOf[k];if(ci==null)return null;const v=row[ci];if(v===null||v===undefined||v==='')return null;const n2=+v;return isNaN(n2)?NaN:n2;};
+ const str=(row,k)=>{const ci=colOf[k];if(ci==null)return null;const v=row[ci];return v===null||v===undefined?null:String(v);};
+ const errs=[],specs=[];
+ for(let ri=1;ri<R.length;ri++){const row=R[ri];if(!Object.keys(row).length)continue;const rn='Row '+(ri+1);
+  const name=str(row,'n'),pos=str(row,'pos');
+  if(!name||!name.trim()){errs.push(rn+': missing name');continue;}
+  if(!pos||E.POS.indexOf(pos.trim())<0){errs.push(rn+': bad position "'+(pos||'')+'"');continue;}
+  const sp={n:name.trim().slice(0,26),pos:pos.trim(),id:num(row,'id')};
+  let bad=false;const take=(k,lo,hi)=>{const v=num(row,k);if(v===null)return;if(isNaN(v)){errs.push(rn+': '+k+' is not a number');bad=true;return;}sp[k]=Math.max(lo,Math.min(hi,Math.round(v)));};
+  take('num',0,99);take('age',16,60);take('ht',36,91);take('wt',60,500);take('sk',0,4);take('pot',20,99);
+  const yrv=num(row,'yr');if(yrv!==null){if(isNaN(yrv)){errs.push(rn+': Yr is not a number');bad=true;}else sp.yr=Math.max(0,Math.min(4,Math.round(yrv)));}
+  for(const a of E.ATTR)take('a.'+a,15,99);
+  for(const gk in XLGEAR)take(gk,XLGEAR[gk][0],XLGEAR[gk][1]);
+  for(const [bk] of BODY){const ci=colOf['b.'+bk];if(ci==null)continue;const v=row[ci];if(v===null||v===undefined||v==='')continue;const n2=+v;if(isNaN(n2)){errs.push(rn+': '+bk+' % is not a number');bad=true;}else sp['b.'+bk]=Math.max(50,Math.min(160,n2));}
+  if(!bad)specs.push(sp);}
+ if(errs.length)return{err:'Roster not imported — '+errs.length+' problem'+(errs.length>1?'s':'')+': '+errs.slice(0,3).join('; ')+(errs.length>3?' …':'')};
+ if(specs.length<24)return{err:'That sheet has only '+specs.length+' valid players — a roster needs at least 24. Nothing was changed.'};
+ const cnt={};for(const sp of specs)cnt[sp.pos]=(cnt[sp.pos]||0)+1;
+ const short=E.POS.filter(p=>(cnt[p]||0)<E.STARTERS[p]);
+ if(short.length)return{err:'That roster is short at '+short.map(p=>p+' (needs '+E.STARTERS[p]+')').join(', ')+'. Nothing was changed.'};
+ const work=JSON.parse(JSON.stringify(t)),byId={};for(const p of work.roster)byId[p.id]=p;
+ const mode=L&&scr==='hub'?L.mode:'pro';let added=0,updated=0;const out=[],usedIds=new Set();
+ for(const sp of specs){let p=sp.id!=null&&byId[sp.id]&&!usedIds.has(sp.id)?byId[sp.id]:null;const isNew=!p;
+  if(isNew){p=E.mkPlayer(sp.pos,65,mode);added++;}else{usedIds.add(sp.id);updated++;}
+  let changed=false;const setA=(k,v)=>{if(v!==undefined&&p[k]!==v){p[k]=v;changed=true;}};
+  setA('n',sp.n);setA('pos',sp.pos);setA('num',sp.num);setA('age',sp.age);setA('ht',sp.ht);setA('wt',sp.wt);setA('sk',sp.sk);
+  if(sp.yr!==undefined)p.yr=mode==='college'?sp.yr:0;
+  for(const a of E.ATTR)if(sp['a.'+a]!==undefined&&p.a[a]!==sp['a.'+a]){p.a[a]=sp['a.'+a];changed=true;}
+  if(!p.g)p.g={};for(const gk in XLGEAR)if(sp[gk]!==undefined){if(gk==='g.helm'&&sp[gk]===-1)delete p.g.helm;else p.g[gk.slice(2)]=sp[gk];}
+  for(const [bk] of BODY){const v=sp['b.'+bk];if(v===undefined)continue;if(!p.b)p.b={};if(Math.round(v)===100)delete p.b[bk];else p.b[bk]=v/100;}
+  if(sp.pot!==undefined)p.pot=sp.pot;
+  if(changed){p.ovr=E.computeOvr(p);if(p.pot<p.ovr)p.pot=p.ovr;}
+  out.push(p);}
+ work.roster=out;E.fixNums(work);E.sortRoster(work);t.roster=work.roster;
+ return{msg:'Roster imported for '+t.name+': '+out.length+' players ('+updated+' updated, '+added+' new).'};}
+/*XL_END*/
 fi.addEventListener('change',()=>{const f=fi.files&&fi.files[0];if(f&&fileCb)fileCb(f);fileCb=null;});
 const CH={
  exh:v=>{ex.h=+v;render();},exa:v=>{ex.a=+v;render();},nln:(v,d,el,live)=>{nl.n=+v;const o=$('#nlnv');if(o)o.textContent=v;},bt:v=>{view.bt=+v;view.pid=null;render();},
@@ -1733,6 +1899,7 @@ const CH={
  tcol:(v,d,el,live)=>{setK(editTeam(),d.k,v);if(live)paint();else{commit();render();}},
  ttxt:(v,d,el,live)=>{const t=editTeam();if(d.k==='abbr')v=v.toUpperCase().replace(/[^A-Z0-9]/g,'');setK(t,d.k,v);if(live)paint();else{commit();render();}},
  pf:(v,d,el,live)=>{if(live)return;const t=editTeam(),p=findP(t,view.pid);if(d.k==='n')p.n=v.trim()||p.n;else if(d.k==='pos'){p.pos=v;p.ovr=E.computeOvr(p);}else p[d.k]=E.clamp(Math.round(+v)||0,d.k==='num'?0:60,d.k==='num'?99:500);commit();render();},
+ kset:(v,d,el,live)=>{KT()[d.k]=+v/100;const o=$('#ks_'+d.k);if(o)o.textContent=v+'%';if(!live){commit();}},
  sstad:(v,d,el,live)=>{const m=editTeam().stad.model;if(!m)return;m[d.k]=+v;$('#ss_'+d.k).textContent=v+(d.k==='scale'?'%':'');if(!live)commit();},
  pht:(v,d,el,live)=>{const p=findP(editTeam(),view.pid);p.ht=E.clamp(+v,36,91);$('#phtv').textContent=Math.floor(p.ht/12)+"'"+p.ht%12+'"';paint();if(!live)commit();},
  pbody:(v,d,el,live)=>{const p=findP(editTeam(),view.pid);(p.b||(p.b={}))[d.k]=+v/100;$('#pb_'+d.k).textContent=v+'%';paint();if(!live)commit();},
@@ -1740,14 +1907,14 @@ const CH={
 };
 app.addEventListener('click',e=>{const el=e.target.closest('[data-a]');if(!el||el.disabled)return;const f=ACT[el.dataset.a];if(f)f(el.dataset,el,e);});
 app.addEventListener('change',e=>{const el=e.target.closest('[data-c]');if(el&&CH[el.dataset.c])CH[el.dataset.c](el.value,el.dataset,el,false);});
-app.addEventListener('input',e=>{const el=e.target.closest('[data-c]');if(el&&(el.type==='color'||el.type==='range'||el.type==='text')&&CH[el.dataset.c]&&['tcol','ttxt','pattr','nln','pht','pbody','sstad'].includes(el.dataset.c))CH[el.dataset.c](el.value,el.dataset,el,true);});
+app.addEventListener('input',e=>{const el=e.target.closest('[data-c]');if(el&&(el.type==='color'||el.type==='range'||el.type==='text')&&CH[el.dataset.c]&&['tcol','ttxt','pattr','nln','pht','pbody','sstad','kset'].includes(el.dataset.c))CH[el.dataset.c](el.value,el.dataset,el,true);});
 
 /* ---------- device-side model storage (never uploaded) ---------- */
 const STAD={},IDB={db:null,open(){return new Promise(r=>{try{const q=indexedDB.open('gl_assets',1);q.onupgradeneeded=()=>q.result.createObjectStore('a');q.onsuccess=()=>{this.db=q.result;r(1);};q.onerror=()=>r(0);}catch(e){r(0);}});},
  put(k,v){try{if(this.db)this.db.transaction('a','readwrite').objectStore('a').put(v,k);}catch(e){}},del(k){try{if(this.db)this.db.transaction('a','readwrite').objectStore('a').delete(k);}catch(e){}},
  all(cb){try{const q=this.db.transaction('a').objectStore('a').openCursor();q.onsuccess=()=>{const c=q.result;if(c){cb(c.key,c.value);c.continue();}};}catch(e){}}};
 /* pack a zipped scene.gltf + .bin + textures into one .glb in memory */
-function zipToGlb(u8){if(!window.fflate)throw new Error('zip reader did not load');const F=fflate.unzipSync(u8);return packGlb(F);}
+function zipToGlb(u8){if(!window.fflate)throw new Error('zip reader did not load');const F=fflate.unzipSync(u8);for(const k in F)if(/\.glb$/i.test(k)){const b=F[k];return b.buffer.slice(b.byteOffset,b.byteOffset+b.byteLength);}return packGlb(F);}
 function packGlb(F){const names=Object.keys(F),glb=names.find(n=>/\.glb$/i.test(n));if(glb){const b=F[glb];return b.buffer.slice(b.byteOffset,b.byteOffset+b.byteLength);}const gn=names.find(n=>/\.gltf$/i.test(n));if(!gn)return null;
  const dir=gn.includes('/')?gn.slice(0,gn.lastIndexOf('/')+1):'',J=JSON.parse(new TextDecoder().decode(F[gn])),get=x=>{const d=decodeURIComponent(x);return F[dir+d]||F[d]||F[names.find(n=>n.endsWith('/'+d.split('/').pop()))];};
  const parts=[];let off=0;const add=b=>{const o=off;parts.push(b);off+=b.length;const pad=(4-off%4)%4;if(pad){parts.push(new Uint8Array(pad));off+=pad;}return o;};
@@ -1860,7 +2027,7 @@ function startGame(cfg){cur=cfg;cfg.league=scr==='hub';A.init();A.loud();
  if(!V.ok&&!V.init(cv)){toast('The 3D engine could not start on this device, so the game was simulated instead.');G.start(Object.assign({},cfg,{user:-1,headless:true}));const r=G.simToEnd();cur=null;return cfg.onEnd(cfg.league?r:null);}
  app.hidden=true;hud.hidden=false;document.body.classList.add('ingame');fin.hidden=true;pm.hidden=true;sheet.hidden=true;mtr.hidden=true;meter=null;audOpen=false;bugKey=uiKey='';{const d=sget('gl_detail');V.setDetail(d==null?2:+d);V.setCam(sget('gl_cam')||'std');pm.querySelector('[data-p=detail]').textContent='Graphics: '+GFX[V.detail];pm.querySelector('[data-p=cam]').textContent='Camera: '+CAMN[V.cam];V.setMocap(sget('gl_mocap')!=='0');pm.querySelector('[data-p=mocap]').textContent='Players: '+(V.mocap?'Motion capture':'Simple');cfg.defCam=sget('gl_dcam')==='def'?'def':'off';pm.querySelector('[data-p=dcam]').textContent='Defense camera: '+(cfg.defCam==='def'?'Behind defense':'Behind offense');}PR=null;pres.hidden=true;hud.classList.remove('pres');cfg.present=true;cfg.stadGlb=cfg.home.stad.model&&STAD[cfg.home.stad.model.id]||null;if(window.innerHeight>window.innerWidth)setTimeout(()=>toast('Tip: turn your phone sideways for a wider view of the field.'),1500);
  for(let i=0;i<2;i++){const t=cfg[i?'away':'home'],e=$('#b'+i);e.style.setProperty('--c',t.c1);e.querySelector('b').textContent=t.abbr;e.querySelector('span').innerHTML=lg(t,26);}
- Art.ready([cfg.home.logo.img,cfg.away.logo.img,cfg.home.field.img],()=>{V.resize();V.build(cfg);G.start(Object.assign({hud:HUDI,runoff:cfg.qLen>=15?32:cfg.qLen>=10?24:cfg.qLen>=6?18:14},cfg));running=true;paused=false;last=performance.now();raf=requestAnimationFrame(frame);
+ Art.ready([cfg.home.logo.img,cfg.away.logo.img,cfg.home.field.img].concat([cfg.home,cfg.away].flatMap(t=>[(t.kit||{}).hImg,(t.kit||{}).jImg,(t.kit||{}).pImg,(t.stad||{}).rib])),()=>{V.resize();V.build(cfg);G.start(Object.assign({hud:HUDI,runoff:cfg.qLen>=15?32:cfg.qLen>=10?24:cfg.qLen>=6?18:14},cfg));running=true;paused=false;last=performance.now();raf=requestAnimationFrame(frame);
   HUDI.banner(cfg.away.name.toUpperCase()+' AT '+cfg.home.name.toUpperCase(),cfg.home.stad.name+' · '+cfg.rules.name+' rules');});}
 function endGame(res){PR=null;pres.hidden=true;Voice.stop();running=false;cancelAnimationFrame(raf);hud.hidden=true;app.hidden=false;document.body.classList.remove('ingame');A.quiet();const c=cur;cur=null;if(c&&c.onEnd)c.onEnd(res);}
 window.addEventListener('resize',()=>V.resize());
@@ -1878,10 +2045,11 @@ window.addEventListener('pointermove',e=>{if(pvDrag!=null){pvYaw+=(e.clientX-pvD
 /* ================= boot ================= */
 function boot(){const s=sget(SAVE);if(s){try{L=E.unpack(s);}catch(e){L=null;}}const x=sget(EXS);if(x){try{EXT=E.unpack(x);}catch(e){EXT=null;}}if(!EXT||!EXT.length)EXT=E.exhibitionTeams('pro');
  let t=0;Art.onload=()=>{clearTimeout(t);t=setTimeout(()=>{if(!running&&!app.querySelector('input:focus'))render();},60);};
- setTimeout(()=>{try{if(!V.ok)V.init(cv);}catch(e){}},400);IDB.open().then(()=>IDB.all((k,v)=>{STAD[k]=v;}));Voice.init();render();requestAnimationFrame(pvLoop);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(()=>{for(const tm of EXT)delete tm._lgk;if(L)for(const tm of L.teams)delete tm._lgk;render();});}
+ setTimeout(()=>{try{if(!V.ok)V.init(cv);}catch(e){}},400);IDB.open().then(()=>IDB.all((k,v)=>{STAD[k]=v;if(k==='bodytex'&&typeof v==='string')setBody(v,false);}));Voice.init();render();requestAnimationFrame(pvLoop);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(()=>{for(const tm of EXT)delete tm._lgk;if(L)for(const tm of L.teams)delete tm._lgk;render();});}
 boot();
 return {render,state:()=>({L,EXT,scr,tab,view}),act:ACT,packGlb};
 })();
+
 
 </script>
 </body></html>
