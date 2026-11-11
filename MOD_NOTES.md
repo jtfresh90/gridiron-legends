@@ -320,3 +320,244 @@ show the same proportions.
   height renormalization; the rig's true segment fractions differ
   slightly, so total height after extreme edits can drift a few percent
   from the nominal ht — the per-part changes themselves are exact.
+
+---
+
+## Phase 3 — corrected materials: skin reads as skin, head reads as one helmet
+
+Joshua's phone screenshot of the live game (Nov 10) showed the players
+looking half-dressed: one arm in solid team colour and the other bare skin,
+jersey-coloured flecks on skin, and a stark white blob over the helmet.
+Phase 3 diagnosed this from the model data (Blender census of the shipped
+character.js FBX, per-slot geometry maps, ray-cast coverage scans, and
+UV-footprint sampling of the embedded body texture) and fixed it in
+`modPartMat()` only — no model data changed.
+
+### Root cause 1 — Body_2's fabric slots are body regions, not jersey
+
+Phase 1's map assumed every non-Bodymat slot on the body mesh was jersey.
+The census says otherwise. Body_2's slots:
+
+| slot | faces | what it actually is |
+|---|---|---|
+| Bodymat | 22,573 | the skin body (carries the embedded body texture) |
+| Fabric-Silk | 700 | the figure's ENTIRE right arm, shoulder to hand |
+| Fabric-Linen | 357 | patches on the other arm/shoulder |
+| Default | 912 | shin-high socks, both legs, symmetric |
+
+All four slots share the mesh's single UV layer into the one body-skin
+atlas (the embedded FuseModel_Body_Diffuse.png — pure skin: face, arms,
+torso, legs, a painted briefs band; no clothing painted anywhere).
+Sampling the texture over each slot's UV footprint gives mean colours
+indistinguishable from Bodymat skin (Silk 0.761/0.536/0.455 vs Bodymat
+arms 0.759–0.763/0.532–0.536/0.446–0.448). So the Silk arm and Linen
+patches are skin regions the exporter happened to tag with fabric
+materials — but their FBX materials carry no texture of their own, and
+phase 1 flat-coloured them with the jersey colour: one solid team-colour
+arm, coloured flecks on the other.
+
+Fix: for Body_2's Fabric-Silk/Fabric-Linen slots, `modPartMat` now assigns
+the body texture (`CH.tex`, the same texture object Bodymat uses) with a
+white tint — they render as skin, symmetric with the rest of the body. If
+the texture is ever unavailable, the code falls through to the old flat
+mapping. `Default` keeps the jersey colour on purpose: symmetric
+team-coloured socks are a legitimate kit read and were phase 1's intent.
+
+### Root cause 2 — 'covers' is a helmet cover, not shoulder pads
+
+Phase 1 coloured `covers` #e9e9e9 on the assumption it was shoulder pads.
+Geometry says no: in the original source FBX the covers mesh occupies the
+helmet's space (Z 4.81–5.91 vs the helmet's 4.88–6.07, same X span, both
+parented to the scene root like the helmet), and in the shipped file it
+wraps the helmet as a padded shell with a face opening — a Guardian-Cap
+style helmet cover. There is NO shoulder-pad mesh anywhere in this model;
+the jersey's own yoke forms the shoulder line. The fixed near-white colour
+made the head read as a white jumble over the team-coloured shell.
+
+Fix: `covers` now takes `t.helmet`, like the shell — the head reads as one
+kitted helmet (81% of the front head silhouette in helmet colour + 15%
+visor, up from 48% helmet + 33% stark white).
+
+### Corrected mapping (modPartMat, phase 3)
+
+| mesh / slot | treatment |
+|---|---|
+| any mesh, Bodymat | body texture, white tint (unchanged) |
+| Body_2 Fabric-Silk / Fabric-Linen | **body texture assigned, white tint** (was flat jersey) |
+| Body_2 Default | jersey colour (socks — unchanged, deliberate) |
+| shirt | jersey colour (unchanged) |
+| Body_3_2 (all slots) | pants colour (unchanged) |
+| helmet_1 | team helmet colour (unchanged) |
+| covers | **team helmet colour** (was fixed #e9e9e9) |
+| Loft | dark translucent visor (unchanged) |
+| shoes | #17181c (unchanged) |
+
+### Verification (data-level; Joshua's phone remains the visual gate)
+
+- Census of the shipped character.js FBX == census of the source 10 MB
+  FBX, slot-for-slot (8 meshes, 41 bones); three.js r128 FBXLoader source
+  checked: material names reach the game verbatim and groups follow the
+  FBX material stream, so the name-keyed map is sound.
+- Post-fix ray-cast coverage (bind pose, front): HEAD helmet 81% / visor
+  15% / skin 4%; TORSO jersey 66% with both arms skin; HIPS pants 65%;
+  LEGS pants 43% / jersey socks 42%; FEET shoes 100%.
+- Unit test: the real extracted `modPartMat` passes 19/19 assertions
+  (textured slots incl. the new fabric branch + no-texture fallback,
+  covers/helmet/visor/pants/shirt/socks/shoes, home/away/referee).
+- All 5 inline script blocks pass a syntax check; the diff vs phase 2 is
+  one function (`modPartMat`) — applyProps, the !hasHelmet path, clips,
+  numbers and decals are untouched; character.js is byte-identical.
+
+### Honest flags
+
+- A sliver of Bodymat skin still shows at the waist sides between the
+  jersey hem and the (narrow) pants mesh — it is inside the Bodymat slot,
+  which must stay skin for the face/arms, so no material-level fix exists;
+  covering it would need added geometry (e.g. a pants-coloured waistband),
+  deliberately not improvised here.
+- If Joshua would rather see the helmet cover in a contrast colour than
+  the shell colour, it is a one-line change back — the identification
+  (cover, not pads) is the part the data proves.
+
+---
+
+## Phase 4 — selectable helmet models in Edit Player
+
+Joshua asked for the football helmet models from his Drive "Models" folder
+(phase-3.5 staging: `helmets_staging/`, census in `helmets_staging/census.md`)
+to be selectable per player in Edit Player. The four staged GLM modules now
+live in `models/` and Edit Player has a **Helmet** option in Equipment,
+alongside Visor/Sleeves/Gloves/etc.
+
+### The option
+
+| value | label | module | notes |
+|---|---|---|---|
+| 0 | Stock | — | the player model's own headgear (phase-3 behaviour) |
+| 1 | Bills SpeedFlex | `helmet_bills` | Buffalo Bills SpeedFlex; own livery, never repainted |
+| 2 | Midnight Navy | `helmet_football_helmet_2` | dark-navy textured helmet, deep lineman cage; own texture |
+| 3 | SpeedFlex Style | `helmet_football_helmet` | untextured import; shell takes the team helmet colour |
+| 4 | Ridged Classic | `helmet_helmet` | game-rip ridged dome; shell + ridge strips take the team colour |
+
+Labels are descriptive, not brand claims: the census found no brand marks in
+three of the four sources, so they are named for what they look like (navy
+colour scheme, SpeedFlex styling, ridged dome); the Bills model carries the
+team's actual livery in its geometry colours, so it keeps the team name.
+
+The option uses the editor's existing gear mechanism unchanged: one more
+`tg('helm', …)` chip row in `playerModal()`, written by the existing `pgear`
+action to **`p.g.helm`**, persisted by the same save path as every other gear
+field, and highlighted with the same `(p.g[k]||0)` rule. Generated players
+have no `helm` key and every reader treats a missing/out-of-range value as 0,
+so all existing players, rosters and saves default to Stock untouched.
+
+### Rendering (one code path)
+
+Everything that draws a player — Edit Player preview, PLAY NOW team
+previews, in-game bodies — goes through `mkBody → mkSkinned`, and the choice
+is applied there (`helmIdx(p)` → `hIdx`; referees are excluded twice over:
+`mkBody` never sends refs to `mkSkinned`, and `mkSkinned` forces Stock when
+`p.ref`). When an import is selected **and loaded**:
+
+- the stock headgear meshes (`helmet_1`, `covers`, `Loft`) are hidden;
+- the stock-only add-ons are skipped: logo decals are not added (their
+  anchors were measured for the stock shell), and the procedural visor is
+  never built on this path anyway;
+- the imported helmet is attached to the `mixamorigHead` bone (below).
+
+When Stock is selected — or the import hasn't finished loading — the build
+is exactly the phase-3 build: nothing hidden, decals as before. The
+`!CH.hasHelmet` fallback path is untouched.
+
+### Attachment math (bind-pose exact, per build)
+
+The staged geometry lives in character space (where a skinned mesh renders
+in bind pose), not in head-bone-local space, so the instance is parented to
+the Head bone with the local matrix
+
+    L = inverse(headWorld) · objWorld · templateRootLocal
+
+computed from the built clone's own matrices (`root.updateMatrixWorld(true)`
+in bind pose — no clip has been applied yet, the mixer is created after).
+That makes placement exact by construction for every build: `applyProps`
+proportion edits to the neck/head are already inside `headWorld`, so they
+are compensated automatically, and a larger head (hd) then scales the helmet
+with it, the same way the decal group already rides the head. `L` is stored
+with `matrixAutoUpdate=false` so nothing recomposes it. In animation only
+bone rotations move (fixClip strips Head position/scale tracks), so the
+helmet tracks the head rigidly.
+
+**Placement proof** (Blender 4.2.3, shipped `character.js` FBX + the four
+staged FBXs in one frame; full table in `phase4_work/proof.py` output):
+
+- stock `helmet_1` bbox: centre (−0.0054, −0.0348, 1.6143), size
+  (0.2081, 0.2277, 0.2410)
+- all four imports: centre (−0.005, −0.035, 1.614) — **centre delta ≤ 0.4 mm
+  per axis** vs the stock shell; width (X) ratio 1.000 for all four
+- depth/height ratios vs stock: bills 1.044 / 0.924 · Midnight Navy 1.184 /
+  1.041 · SpeedFlex Style 1.096 / 1.102 · Ridged Classic 1.167 / 1.035.
+  These are the source models' own proportions (the staging width-matched
+  them by design — Midnight Navy's cage really is 18% deeper; that is a
+  lineman cage, not a placement error). Placement — centre, width, frame —
+  is exact; nothing was non-uniformly rescaled to force the extents.
+- `bone.matrix_local · L` composes back to identity with max deviation
+  4.9e-08; the three.js formula was additionally verified numerically in
+  node over 200 randomized bone chains (non-uniform root scale, head-size
+  scale, non-identity template roots): worst deviation < 1e-7.
+
+### Colours
+
+Applied per instance in `helmInstance()`; shell materials are cloned before
+recolouring, so the cached template stays pristine and two teams can share
+a module safely. `helmShell(slug, objectName)` is the whole rule:
+
+- **bills**: nothing repainted — per-face Bills livery (white shell, blue/red
+  zones) renders as authored.
+- **football_helmet_2**: nothing repainted — its embedded navy texture is
+  the design.
+- **football_helmet**: object `shell` → `t.helmet`; cage, straps, screws,
+  liner and the smoke visor keep their staged flat colours.
+- **helmet**: objects `shell` + `shell_strips` → `t.helmet`; facemask,
+  mounts, clips, liner and padding keep their staged flat colours.
+
+### Loading
+
+On demand through the existing `getModel()` (same GLM script-tag mechanism
+as the clips): the first build that needs a module starts its load; until
+it lands, that player renders with the stock helmet (never bald, never
+stalled). Load completion calls the game's own `clearBodies()`, so every
+preview/body rebuilds with the import in place. A failed load resets the
+guard and the next build retries. All four modules together are ~4.3 MB;
+nothing is fetched for players who stay on Stock.
+
+### Verification (phase 4)
+
+- `node --check`: all 5 inline script blocks pass.
+- Diff vs phase 3: exactly 6 hunks (helmet section before `modPartMat`;
+  selection state, stock-hide and decal guard in `mkSkinned`; the attach
+  block; the editor chip row). `original/` untouched; the 17 phase-1–3
+  model modules byte-identical.
+- Node unit test of the **real extracted** phase-4 code: 35/35 assertions —
+  `helmIdx` (missing/junk/out-of-range records → Stock, string coercion),
+  `helmShell` truth table (10 cases), the load-on-demand state machine
+  against a stubbed `getModel` (single in-flight request, rebuild on
+  completion, retry after failure, Stock never loads), editor chip labels
+  matching `HELMET_OPTS`, and the attach-matrix identity above.
+- Blender bbox proof (above); Pages staging regenerated and the split
+  character reassembly re-verified (GLM string identical, decoded sha256
+  equal).
+
+### Honest flags
+
+- On the **Low** graphics setting (or with motion-capture players switched
+  off in the pause menu) the game draws its simple procedural bodies for
+  everyone — the game's own fallback, unchanged since phase 1 — and the
+  helmet option has no effect there, exactly like team colours/proportions
+  on that path. The option applies wherever the replacement model is drawn.
+- Imported helmets get **no team logo decals** (by design above); the Bills
+  model doesn't need them (its livery is in the model) and the other three
+  were never measured for decal anchors.
+- In-browser rendering still can't be verified headlessly; Joshua's phone
+  remains the visual gate, especially helmet seating at extreme proportion
+  edits (the math compensates bind pose exactly; very large head sizes
+  scale the helmet with the head, by design).
