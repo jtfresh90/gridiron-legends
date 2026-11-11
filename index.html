@@ -739,7 +739,7 @@ function live(dt){
  // engagement
  const car=b.carrier,runPlay=car&&!(car===pl.qb&&pl.type==='pass'&&!pl.scramble);S.runPlay=runPlay;
  for(const e of S.ents){const o=e.blk;if(!o||e.down||e.stun>0||o.down||o.shedT>0)continue;if(hyp(o.x-e.x,o.z-e.z)<1.3){o.engN++;if(!o.eng)o.eng=e;}}
- for(const o of S.ents){const e=o.eng;if(!e)continue;const oa=o.rp.a;let rate=clamp(.075+(oa.str*.5+oa.spd*.2+oa.tkl*.3-e.rp.a.blk)*.011,.03,.5)*(runPlay?1.25:1)/(o.engN>1?2.5:1);
+ for(const o of S.ents){const e=o.eng;if(!e)continue;const oa=o.rp.a;let rate=clamp(.06+(oa.str*.5+oa.spd*.2+oa.tkl*.3-e.rp.a.blk)*.002,.025,.4)*(runPlay?1.25:1)/(o.engN>1?2.5:1); /* phase 5 (C8): shed clock retuned - headless sims of the shipped formula had a statue QB sacked in a median ~2.5 s (20/20) because the .075 base rate freed a rusher in ~13 s no matter the matchup, x4 rushers. New base/slope: even matchup ~17 s per rusher (first shed ~4 s), dominant OL ~33 s, overmatched ~11 s. Assignment/engagement logic itself verified working - see MOD_NOTES 5. */
   if(pl.isKick)rate*=2.5;if(R()<rate*dt){o.shedT=1.3;e.stun=.45;o.eng=null;}else if(runPlay&&car){const dx=o.x-car.x,dz=o.z-car.z,d=hyp(dx,dz)||1,p=clamp(.5+(e.rp.a.blk-oa.str)*.02,0,1.2)*dt;o.x+=dx/d*p;o.z+=dz/d*p;}}
  // tackles
  if(car&&b.state==='held'&&!(pl.isKick&&!pl.kicked)){
@@ -972,8 +972,8 @@ const V=(()=>{
 let T,ren,scene,cam,cv,ok=false,bodies=new Map(),mats={},geo=null,ballM,ring,losM,fdM,labels=[],jumbo=null,jKey='',wx=null,lastLine=-1e9,helmets=[null,null],logoTex=[null,null],time=0,detail=2,camMode='std',sun=null,crowd=[],excite=0,ribbon=null,mVC=null,mVCs=null,dims=null,coin=null,lastVd=1,artM=null,artId=-1,flagM=null,spKey='';
 const cp={x:0,y:14,z:30},cl={x:0,y:1,z:0},CAMS={std:1,zoom:.78,wide:1.4};
 function init(canvas){cv=canvas;T=window.THREE;if(!T)return false;try{ren=new T.WebGLRenderer({canvas,antialias:true,powerPreference:'high-performance'});}catch(e){return false;}
- ren.setPixelRatio(Math.min(window.devicePixelRatio||1,2));ren.outputEncoding=T.sRGBEncoding;cam=new T.PerspectiveCamera(50,1,.4,1400);ok=true;resize();loadChar();return true;}
-function resize(){if(!ok)return;ren.setPixelRatio(Math.min(window.devicePixelRatio||1,2));const w=cv.clientWidth||window.innerWidth,h=cv.clientHeight||window.innerHeight;ren.setSize(w,h,false);cam.aspect=w/h;cam.fov=cam.aspect<1?74:50;cam.updateProjectionMatrix();}
+ ren.setPixelRatio(Math.min(window.devicePixelRatio||1,1.5));ren.outputEncoding=T.sRGBEncoding;cam=new T.PerspectiveCamera(50,1,.4,1400);ok=true;resize();loadChar();return true;}
+function resize(){if(!ok)return;ren.setPixelRatio(Math.min(window.devicePixelRatio||1,1.5)); /* phase 5 (E11): cap 1.5 - (1.5/2)^2 = 56% of the fragment cost at cap 2 on hi-dpi phones */const w=cv.clientWidth||window.innerWidth,h=cv.clientHeight||window.innerHeight;ren.setSize(w,h,false);cam.aspect=w/h;cam.fov=cam.aspect<1?74:50;cam.updateProjectionMatrix();}
 const col=c=>{const k=new T.Color(c);if(k.convertSRGBToLinear)k.convertSRGBToLinear();return k;};
 function mat(color,o){const k=color+(o?JSON.stringify(o):'');return mats[k]||(mats[k]=new T.MeshLambertMaterial(Object.assign({color:col(color)},o||{})));}
 function tex(canvas){const t=new T.CanvasTexture(canvas);t.encoding=T.sRGBEncoding;t.anisotropy=ren.capabilities.getMaxAnisotropy?Math.min(8,ren.capabilities.getMaxAnisotropy()):1;return t;}
@@ -1066,7 +1066,13 @@ function fixClip(c,k){const tr=[];for(const t of c.tracks){const i=t.name.lastIn
 function getModel(L_,name,ok,bad){const sc=document.createElement('script');sc.src='models/'+name+'.js';sc.onerror=()=>{CH.st='could not download models/'+name+'.js';bad();};sc.onload=()=>{try{const b=(window.GLM||{})[name];if(!b){CH.st='models/'+name+'.js loaded but was empty';return bad();}const bin=atob(b),u=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);delete window.GLM[name];const o=L_.parse(u.buffer,'');CH.n++;if(!CH.ready)CH.st='loading '+CH.n+' of 17';ok(o);}catch(e){CH.st='error reading '+name+': '+(e&&e.message||e);bad();}};document.head.appendChild(sc);}
 function loadChar(){if(CH.loading||CH.ready)return;if(!T.FBXLoader||!T.SkeletonUtils||!window.fflate){CH.st='loader scripts missing: '+(!T.FBXLoader?'FBXLoader ':'')+(!T.SkeletonUtils?'SkeletonUtils ':'')+(!window.fflate?'fflate':'');return;}CH.loading=true;CH.st='loading character';let L_;try{L_=new T.FBXLoader();}catch(e){CH.st='error: '+e.message;return;}
  getModel(L_,'character',o=>{try{CH.obj=o;const hip=o.getObjectByName('mixamorigHips');if(hip&&hip.position.y>20)CH.hipY=hip.position.y;CH.h=CH.hipY*1.76;CH.hasHelmet=false;CH.boneSet={};o.traverse(m=>{if(m.name){CH.boneSet[m.name.replace(/:/g,'')]=1;if(/helmet/i.test(m.name))CH.hasHelmet=true;}});o.traverse(m=>{if(m.isMesh&&m.material){const ms=Array.isArray(m.material)?m.material:[m.material];for(const q of ms)if(q.map&&!CH.tex)CH.tex=q.map;}});
-   /* mod: 'throw' comes from CLIPS (quarterback_pass), not the character's own animation */let left=CLIPS.length;const done=()=>{if(--left>0)return;try{const id=CH.raw.idle,ht=id&&hipTrack(id[0]),kB=ht&&ht.values[1]>1?CH.hipY/ht.values[1]:.43,kM=CH.hipY/104.275;for(const k in CH.raw)CH.clips[k]=fixClip(CH.raw[k][0],CH.raw[k][1]==='b'?kB:kM);if(!(CH.clips.idle&&CH.clips.run))CH.st='clips missing: '+(CH.clips.idle?'':'idle ')+(CH.clips.run?'':'run')+' | '+CH.st;if(CH.clips.idle&&CH.clips.run){let n=0;const go=()=>{const im=CH.tex&&CH.tex.image;if(!CH.tex||(im&&(im.complete===undefined||(im.complete&&im.naturalWidth)))||n++>30){CH.ready=true;CH.st='ready ('+Object.keys(CH.clips).length+' clips)';clearBodies();}else setTimeout(go,200);};go();}}catch(e){}};
+   /* mod: 'throw' comes from CLIPS (quarterback_pass), not the character's own animation */let left=CLIPS.length;const done=()=>{if(--left>0)return;try{const id=CH.raw.idle,ht=id&&hipTrack(id[0]),kB=ht&&ht.values[1]>1?CH.hipY/ht.values[1]:.43,kM=CH.hipY/104.275;for(const k in CH.raw)CH.clips[k]=fixClip(CH.raw[k][0],CH.raw[k][1]==='b'?kB:kM);
+   /* phase 5 (C6): the 'def' clip is a full falling-down performance - measured
+      on this skeleton it drops the hips 96->14 (FBX units) and pitches to 94
+      degrees, ending flat on the ground, and animate() loops it for every
+      pre-snap CB/S/LB. That is the DBs-falling-before-the-snap bug. Keep only
+      the upright ready-crouch first second; mkSkinned ping-pongs it. */
+   if(CH.clips.def){const c=CH.clips.def;for(const t of c.tracks){const vs=t.values.length/t.times.length;let n=0;while(n<t.times.length&&t.times[n]<=1)n++;if(n>=2&&n<t.times.length){t.times=t.times.slice(0,n);t.values=t.values.slice(0,n*vs);}}c.duration=1;}if(!(CH.clips.idle&&CH.clips.run))CH.st='clips missing: '+(CH.clips.idle?'':'idle ')+(CH.clips.run?'':'run')+' | '+CH.st;if(CH.clips.idle&&CH.clips.run){let n=0;const go=()=>{const im=CH.tex&&CH.tex.image;if(!CH.tex||(im&&(im.complete===undefined||(im.complete&&im.naturalWidth)))||n++>30){CH.ready=true;CH.st='ready ('+Object.keys(CH.clips).length+' clips)';clearBodies();}else setTimeout(go,200);};go();}}catch(e){}};
    for(const [key,file,fam] of CLIPS)getModel(L_,file,a=>{const c=longest(a.animations);if(c)CH.raw[key]=[c,fam];done();},done);}catch(e){}},()=>{});}
 /* recolour the suit texture per team: dark suit and marker pixels take the team colour, skin, gloves and shoes are kept */
 function teamTex(color){if(CH.texC[color])return CH.texC[color];let out=CH.tex;try{const im=CH.tex.image;if(!im||(im.complete!==undefined&&!(im.complete&&im.naturalWidth)))return CH.tex;const N=1024,c=document.createElement('canvas');c.width=c.height=N;const x=c.getContext('2d');x.drawImage(im,0,0,N,N);const d=x.getImageData(0,0,N,N),a=d.data,k=new T.Color(color),R=k.r*255,G_=k.g*255,B_=k.b*255;
@@ -1088,20 +1094,52 @@ const HELMET_OPTS=[null,
  {slug:'helmet_helmet',label:'Ridged Classic'}];
 const HELM_MOD={},HELM_LOAD={};
 function helmIdx(p){const v=p&&p.g?+p.g.helm||0:0;return v>0&&v<HELMET_OPTS.length?v:0;}
-/* which imported objects are shells that take the team helmet colour: only the
-   two untextured imports. bills keeps its own livery; football_helmet_2 keeps
-   its own navy texture. Everything else keeps its staged colours. */
-function helmShell(slug,name){if(slug==='helmet_football_helmet')return name==='shell';if(slug==='helmet_helmet')return name==='shell'||name==='shell_strips';return false;}
+/* phase 5 (Joshua override): ALL imported shells take the team helmet colour,
+   like the stock helmet. bills: the shell-bearing parts are recoloured and the
+   Bills livery is dropped. football_helmet_2: its navy BaseColor texture is
+   dropped (map=null) and the shared material takes the team colour.
+   football_helmet / helmet were already team-coloured in phase 4. */
+function helmShell(slug,name){if(slug==='helmet_bills')return['shell','jaw_pieces','side_panels','inner_shell','front_piece'].includes(name);if(slug==='helmet_football_helmet_2')return name==='shell'||name==='facemask'||name==='cage_frame';if(slug==='helmet_football_helmet')return name==='shell';if(slug==='helmet_helmet')return name==='shell'||name==='shell_strips';return false;}
 function loadHelmMod(slug){if(HELM_MOD[slug]||HELM_LOAD[slug]||!T||!T.FBXLoader)return;HELM_LOAD[slug]=1;try{getModel(new T.FBXLoader(),slug,o=>{HELM_MOD[slug]=o;HELM_LOAD[slug]=0;clearBodies();},()=>{HELM_LOAD[slug]=0;});}catch(e){HELM_LOAD[slug]=0;}}
 function helmGet(idx){const o=HELMET_OPTS[idx];if(!o)return null;if(!HELM_MOD[o.slug])loadHelmMod(o.slug);return HELM_MOD[o.slug]||null;}
 function helmInstance(idx,t){const o=HELMET_OPTS[idx],g=HELM_MOD[o.slug].clone(true);
  g.traverse(m=>{if(!m.isMesh)return;m.frustumCulled=false;m.castShadow=detail>1;
+  /* phase 5 (A3): football_helmet's 'visor' object sits in the brow band
+     (measured z 1.65-1.74 in character space - the front brow panel, not an
+     eye shield) and was made transparent smoke in staging on a guess; with it
+     see-through, the forehead shows through the slot above the face opening -
+     Joshua's "hole through the helmet". Make it opaque; geometry untouched. */
+  if(o.slug==='helmet_football_helmet'&&m.name==='visor'){const arr=Array.isArray(m.material),ms=(arr?m.material:[m.material]).map(q=>{const c=q.clone();c.transparent=false;c.opacity=1;c.color=col('#23262b');return c;});m.material=arr?ms:ms[0];return;}
   if(helmShell(o.slug,m.name)){const arr=Array.isArray(m.material),ms=(arr?m.material:[m.material]).map(q=>{const c=q.clone();c.map=null;c.color=col(t.helmet);return c;});m.material=arr?ms:ms[0];}});
  return g;}
+/* phase 5 (A2): helmet logo patch bent onto the shell's measured side surface.
+   (cx,cz) = centre of curvature in the parent frame's horizontal (x,z) plane,
+   R = radius, (ax,az) = surface point at patch centre, yC = patch centre
+   height, size = patch radius, clr = clearance, sLo/sHi = the shell surface's
+   vertical taper (relative surface distance 0.04 below/above centre height).
+   Parameters measured per shell - see MOD_NOTES phase 5. */
+function decalPatch(cx,cz,R,ax,az,yC,size,clr,sLo,sHi){
+ const dx0=ax-cx,dz0=az-cz,L0=Math.hypot(dx0,dz0)||1,ux=dx0/L0,uz=dz0/L0;
+ const seg=16,rings=3,pos=[],nor=[],uv=[],idx=[];
+ for(let r=0;r<=rings;r++)for(let s2=0;s2<=seg;s2++){
+  const ph=s2/seg*Math.PI*2,rho=r/rings,u=Math.cos(ph)*rho,v=Math.sin(ph)*rho;
+  const th=u*size/(R+clr),cs=Math.cos(th),sn=Math.sin(th);
+  const dx=ux*cs+uz*sn,dz=-ux*sn+uz*cs;
+  const sv=v>0?1+(sHi-1)*Math.min(1,v/.57):1+(sLo-1)*Math.min(1,-v/.57);
+  const rr=R*sv+clr;
+  pos.push(cx+dx*rr,yC+v*size,cz+dz*rr);nor.push(dx,0,dz);uv.push(u/2+.5,v/2+.5);}
+ for(let r=0;r<rings;r++)for(let s2=0;s2<seg;s2++){const a=r*(seg+1)+s2,b=a+1,c2=a+seg+1,d=c2+1;idx.push(a,c2,b,b,c2,d);}
+ const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(pos,3));g.setAttribute('normal',new T.Float32BufferAttribute(nor,3));g.setAttribute('uv',new T.Float32BufferAttribute(uv,2));g.setIndex(idx);return g;}
+/* per-shell decal parameters in template-local units (measured, MOD_NOTES 5) */
+const HELM_DECAL={
+ helmet_bills:{yC:165.5,clr:.45,s:[1.06,.73],plus:{c:[-3.21,3.25],R:11.51,a:[8.23,3.5]},minus:{c:[2.17,3.23],R:11.38,a:[-9.15,3.5]}},
+ helmet_football_helmet_2:{yC:165.5,clr:.4,s:[.99,.79],plus:{c:[-3.78,1.61],R:12.5,a:[8.58,3.5]},minus:{c:[2.78,1.61],R:12.5,a:[-9.58,3.5]}},
+ helmet_football_helmet:{yC:165.5,clr:.4,s:[1.01,.82],plus:{c:[-5.72,2.79],R:14.49,a:[8.68,3.5]},minus:{c:[4.71,2.79],R:14.47,a:[-9.68,3.5]}},
+ helmet_helmet:{yC:165.5,clr:.4,s:[.99,.67],plus:{c:[-5.99,2.30],R:14.8,a:[8.9,3.5]},minus:{c:[4.97,2.29],R:14.78,a:[-9.9,3.5]}}};
 /* mod: per-part material treatment for the replacement player model - its own helmet, visor,
    pads and jersey meshes take the team colours directly (no mocap-suit texture surgery).
    Bodymat keeps the model's embedded body texture; referees get a black kit. */
-function modPartMat(meshName,q,c,t,home,ref){const jerC=ref?'#111111':home?t.c1:t.away,pantsC=ref?'#111111':t.pants;
+function modPartMat(meshName,q,c,t,home,ref,g){const jerC=ref?'#111111':home?t.c1:t.away,pantsC=ref?'#111111':t.pants;
  if(q.name==='Bodymat'){c.color=col('#ffffff');return c;}
  /* phase 3: Body_2's Fabric-Silk slot is the figure's whole right arm and its
     Fabric-Linen slot a few arm/shoulder patches - both carry UVs into the same
@@ -1118,7 +1156,12 @@ function modPartMat(meshName,q,c,t,home,ref){const jerC=ref?'#111111':home?t.c1:
  if(meshName==='helmet_1'||meshName==='covers')c.color=col(t.helmet);
  else if(meshName==='Loft'){c.color=col('#101318');c.transparent=true;c.opacity=.85;}
  else if(meshName==='Body_3_2')c.color=col(pantsC);
- else if(meshName==='shoes')c.color=col('#17181c');
+ /* phase 5 (F): the editor's Socks option drives Body_2's Default slot (the
+    lower-leg band of the body texture atlas): 0 = skin, 1 = team (phase-4
+    behaviour), 2 = white. Cleats option drives the shoes: 0 = white,
+    1 = black (phase-4 behaviour), 2 = team primary. */
+ else if(meshName==='Body_2'&&q.name==='Default'){if(g&&g.so===0&&CH.tex){c.map=CH.tex;c.color=col('#ffffff');}else if(g&&g.so===2)c.color=col('#f1f1f1');else c.color=col(jerC);}
+ else if(meshName==='shoes')c.color=col(ref?'#17181c':g&&g.cl===0?'#f1f1f1':g&&g.cl===2?t.c1:'#17181c');
  else c.color=col(jerC);
  return c;}
 /* phase 2: per-part build proportions (p.b via Art.dims — the same multipliers the
@@ -1141,21 +1184,47 @@ function applyProps(obj,D){if(!obj||!D)return;
  for(const s of ['Left','Right']){const hn=obj.getObjectByName('mixamorig'+s+'Hand');if(hn)hn.scale.setScalar(D.ha);}}
 function mkSkinned(e,t,home,parent,ltex){const g_=mkGeo(),p=e.rp,ref=!!p.ref,g=p.g||{},jer=ref?'#ececec':home?t.c1:t.away,numC=home?t.c2:t.c1,line=p.pos==='OL'||p.pos==='DL'||p.pos==='LB',YD=91.44;
  const obj=T.SkeletonUtils.clone(CH.obj),tx=CH.hasHelmet?null:teamTex(jer),root=new T.Group(),flip=new T.Group();flip.rotation.y=Math.PI;root.add(flip);flip.add(obj);const ht=(p.ht||73)/36,sc=ht/CH.h;
- if(CH.hasHelmet){const D=Art.dims(p);applyProps(obj,D);const ps=sc/(D.raw/PROP_RAW0);obj.scale.set(ps*D.ws,ps,ps*D.ws);}else obj.scale.setScalar(sc);
+ if(CH.hasHelmet){const D=Art.dims(p);
+  /* phase 5 (B4): capture the mapped bones' REST offsets before applyProps
+     scales them. animate() re-asserts rest x factor after every mixer update
+     (B.prop), so the proportions no longer depend on the one-time build-time
+     application surviving clone/bind/mixer state handling anywhere in the
+     chain. Default build (all factors 1) keeps B.prop null and the exact
+     phase-4 path. */
+  let prop=null;
+  if(PROP_MAP.some(([,k])=>D[k]!==1)||D.hd!==1||D.ha!==1){const list=[];for(const [nm,k] of PROP_MAP){const b=obj.getObjectByName(nm);if(b)list.push([b,b.position.clone(),k]);}prop={D,list,hd:obj.getObjectByName('mixamorigHead'),ha:['Left','Right'].map(s2=>obj.getObjectByName('mixamorig'+s2+'Hand')).filter(Boolean)};}
+  applyProps(obj,D);obj.userData.prop=prop;const ps=sc/(D.raw/PROP_RAW0);obj.scale.set(ps*D.ws,ps,ps*D.ws);}else obj.scale.setScalar(sc);
  obj.position.set(0,0,0);
  const hIdx=CH.hasHelmet&&!ref?helmIdx(p):0,hTpl=hIdx?helmGet(hIdx):null,hOn=!!hTpl;
- obj.traverse(m=>{if(!m.isMesh)return;m.frustumCulled=false;m.castShadow=detail>1;if(hOn&&(m.name==='helmet_1'||m.name==='covers'||m.name==='Loft')){m.visible=false;return;}if(!ref&&/hat/i.test(m.name||'')){m.visible=false;return;}const arr=Array.isArray(m.material),ms=(arr?m.material:[m.material]).map(q=>{const c=q.clone();if(CH.hasHelmet){c.skinning=true;return modPartMat(m.name,q,c,t,home,ref);}if(CH.tex&&q.map&&q.map===CH.tex)c.map=tx;else if(!CH.tex)c.color=col(/joint/i.test(q.name||'')?(ref?'#111111':home?t.c2:t.c1):jer);if(/reflect/i.test(q.name||''))c.color=col(jer);c.skinning=true;return c;});m.material=arr?ms:ms[0];});
+ obj.traverse(m=>{if(!m.isMesh)return;m.frustumCulled=false;m.castShadow=detail>1;if(hOn&&(m.name==='helmet_1'||m.name==='covers'||m.name==='Loft')){m.visible=false;return;}
+  /* phase 5 (F): the editor's Visor option now drives the model's Loft (its
+     visor mesh) on the stock path too - phase 4 rendered it for everyone,
+     which made Visor=None a dead option on this model. */
+  if(m.name==='Loft'&&!g.v){m.visible=false;return;}if(!ref&&/hat/i.test(m.name||'')){m.visible=false;return;}const arr=Array.isArray(m.material),ms=(arr?m.material:[m.material]).map(q=>{const c=q.clone();if(CH.hasHelmet){c.skinning=true;return modPartMat(m.name,q,c,t,home,ref,g);}if(CH.tex&&q.map&&q.map===CH.tex)c.map=tx;else if(!CH.tex)c.color=col(/joint/i.test(q.name||'')?(ref?'#111111':home?t.c2:t.c1):jer);if(/reflect/i.test(q.name||''))c.color=col(jer);c.skinning=true;return c;});m.material=arr?ms:ms[0];});
  const head=obj.getObjectByName('mixamorigHead'),chest=obj.getObjectByName('mixamorigSpine2'),hand=obj.getObjectByName('mixamorigRightHand');
  if(!ref&&head){const hg=new T.Group();hg.scale.setScalar(YD*1.02);hg.rotation.y=Math.PI;hg.position.set(0,9.5,1.5);head.add(hg);
   if(!CH.hasHelmet){bake(helmetParts(t,g,line,detail>0,null),1,hg);
   if(g.v)mesh(g_.visor,new T.MeshPhongMaterial({color:0x0b0e14,transparent:true,opacity:.88,side:T.DoubleSide,shininess:120}),0,-.03,-.03,hg).scale.setScalar(.86);}
-  if(ltex&&!hOn){const dm=new T.MeshLambertMaterial({map:ltex,transparent:true});for(const sd of [-1,1]){const d=mesh(g_.decal,dm,sd*(CH.hasHelmet?.127:.152),.015,0,hg);d.rotation.y=sd*Math.PI/2;d.scale.setScalar(.82);}}}
- if(hOn&&head){const hg2=helmInstance(hIdx,t);root.updateMatrixWorld(true);hg2.updateMatrix();const L=new T.Matrix4().getInverse(head.matrixWorld).multiply(obj.matrixWorld).multiply(hg2.matrix);hg2.matrixAutoUpdate=false;hg2.matrix.copy(L);head.add(hg2);}
- if(!ref&&chest){const ng=new T.Group();ng.scale.set(YD*.8,YD*.8,YD*.6);ng.rotation.y=Math.PI;ng.position.set(0,1,0);chest.add(ng);const nt=new T.MeshLambertMaterial({map:numTex(p.num,numC),transparent:true});mesh(g_.num,nt,0,0,0,ng);mesh(g_.numB,nt,0,0,0,ng);}
- const B={root,skinned:true,obj,hand,mix:new T.AnimationMixer(obj),acts:{},cur:'',curA:null,t,ti:e.team,hs:1,carryY:ht*.6,qbY:ht*.75,top:ht*1.04,j:[],ph0:Math.random()*6};
+  if(ltex&&!hOn){const dm=new T.MeshLambertMaterial({map:ltex,transparent:true});
+   if(CH.hasHelmet){/* phase 5 (A2): flat decal -> patch bent onto the stock shell's measured side surface (hg frame: centre (sd*.0116,-.0389), R .1221, anchor sd*.1274 - MOD_NOTES 5) */
+    const dmp=new T.MeshLambertMaterial({map:ltex,transparent:true,side:T.DoubleSide});
+    for(const sd of [-1,1]){const d=new T.Mesh(decalPatch(sd*.0116,-.0389,.1221,sd*.1274,0,.015,.0697,.006,1.14,.73),dmp);d.frustumCulled=false;hg.add(d);}}
+   else for(const sd of [-1,1]){const d=mesh(g_.decal,dm,sd*.152,.015,0,hg);d.rotation.y=sd*Math.PI/2;d.scale.setScalar(.82);}}}
+ if(hOn&&head){const hg2=helmInstance(hIdx,t);root.updateMatrixWorld(true);hg2.updateMatrix();const L=new T.Matrix4().getInverse(head.matrixWorld).multiply(obj.matrixWorld).multiply(hg2.matrix);hg2.matrixAutoUpdate=false;hg2.matrix.copy(L);head.add(hg2);
+  /* phase 5 (A2): logo patches on the imported shells too, bent per shell */
+  if(ltex){const P=HELM_DECAL[HELMET_OPTS[hIdx].slug];if(P){const dmp=new T.MeshLambertMaterial({map:ltex,transparent:true,side:T.DoubleSide});for(const sd of [-1,1]){const q2=sd>0?P.plus:P.minus;const d=new T.Mesh(decalPatch(q2.c[0],q2.c[1],q2.R,q2.a[0],q2.a[1],P.yC,6.97,P.clr,P.s[0],P.s[1]),dmp);d.frustumCulled=false;hg2.add(d);}}}}
+ if(!ref&&chest){const ng=new T.Group();ng.scale.set(YD*.8,YD*.8,YD*.6);ng.rotation.y=Math.PI;ng.position.set(0,1,0);chest.add(ng);const nt=new T.MeshLambertMaterial({map:numTex(p.num,numC),transparent:true});
+  /* phase 5 (B5): the stock number arcs floated on this model (front median
+     0.0098 / back median 0.0232 game units off the chest, harness-measured in
+     the real mkSkinned flow). Per-mesh scale+offset refit: front min/med/p95
+     .0027/.0060/.0096, back .0034/.0064/.0144, nothing sunk. */
+  const nmF=mesh(g_.num,nt,.007,0,-.035,ng);nmF.scale.set(.9,1,.9);
+  const nmB=mesh(g_.numB,nt,.021,0,-.035,ng);nmB.scale.set(.91,1,.91);}
+ const B={root,skinned:true,obj,hand,mix:new T.AnimationMixer(obj),acts:{},cur:'',curA:null,t,ti:e.team,hs:1,carryY:ht*.6,qbY:ht*.75,top:ht*1.04,j:[],ph0:Math.random()*6,prop:obj.userData.prop||null};
  for(const k in CH.clips)B.acts[k]=B.mix.clipAction(CH.clips[k]);
+ if(B.acts.def)B.acts.def.setLoop(T.LoopPingPong,Infinity); /* phase 5 (C6): trimmed crouch loops without a pop */
  const sh=mesh(g_.blob,new T.MeshBasicMaterial({color:0,transparent:true,opacity:.3,depthWrite:false}),0,.03,0,root);sh.rotation.x=-Math.PI/2;sh.scale.setScalar(ht/2);parent.add(root);return B;}
-const ONCE={stance:1,throw:1,kick:1,catch:1,tackle:1,fall:1,getup:1,hike:1},SKIP={tackle:.5,fall:.4,throw:.25};
+const ONCE={stance:1,throw:1,kick:1,catch:1,tackle:1,fall:1,getup:1,hike:1},SKIP={tackle:.08,fall:.4,throw:.25}; /* phase 5 (C7): SKIP.tackle was .5 - measured on this skeleton the tackle clip's drive/wrap phase is 0-~33% and at 50% the tackler is already horizontal (spine pitch 84 deg), so tackles started mid-fall. .08 starts at the drive. fall keeps .4: that clip's hips spike upward until ~34%. */
 function animate(e,B,S,dt){const b=S.ball,pl=S.play||{},sp=Math.hypot(e.vx,e.vz),live=S.phase==='live'||S.phase==='dead',f=e.vx*e.hx+e.vz*e.hz,sd=e.vx*e.hz-e.vz*e.hx,car=b.carrier===e,an=e.anim,role=e.role,pos=e.rp.pos;e.animT+=dt;let w='idle',rate=1;
  if(!live){if(role==='REF'||role==='CAP'||role==='K'||role==='P'||role==='RET'||role==='QB'||role==='H')w='idle';else if(an==='set3')w='stance';else if(pos==='CB'||pos==='S'||pos==='LB')w='def';else w='idle';}
  else if(e.down||an==='down')w='fall';
@@ -1169,13 +1238,24 @@ function animate(e,B,S,dt){const b=S.ball,pl=S.play||{},sp=Math.hypot(e.vx,e.vz)
  else if(e.eng||(an==='block'&&e.blk)||(S.phase==='live'&&!car&&b.carrier&&b.carrier.team!==e.team))w='def';
  if(!B.acts[w])w='idle';
  if(w!==B.cur){const a=B.acts[w];if(a){a.reset();if(ONCE[w]){a.setLoop(T.LoopOnce,1);a.clampWhenFinished=true;}if(SKIP[w])a.time=a.getClip().duration*SKIP[w];a.fadeIn(.16);a.play();if(B.curA&&B.curA!==a)B.curA.fadeOut(.16);B.cur=w;B.curA=a;}}
- if(B.curA)B.curA.timeScale=rate;B.mix.update(dt);B.root.position.set(e.x,0,-e.z);B.root.rotation.y=Math.atan2(-e.hx,e.hz);}
+ if(B.curA)B.curA.timeScale=rate;
+ /* phase 5 (E11): mixer LOD - bodies far from the ball update their skeleton
+    at 30 Hz (accumulated dt), near bodies every frame; a dt of 0 (paused /
+    first frame) skips the mixer entirely. Root position/rotation still set
+    every call, so movement never stutters. */
+ let mdt=dt;
+ if(dt>0&&Math.abs(e.x-b.x)+Math.abs(e.z-b.z)>60){B.acc=(B.acc||0)+dt;if(B.acc<1/30)mdt=0;else{mdt=B.acc;B.acc=0;}}
+ if(mdt>0){B.mix.update(mdt);
+  /* phase 5 (B4): re-assert edited proportions AFTER the mixer, every frame -
+     immune to any build-time neutralisation in clone/bind/mixer handling. */
+  if(B.prop){const P=B.prop;for(const [bn,r,k] of P.list)bn.position.copy(r).multiplyScalar(P.D[k]);if(P.hd)P.hd.scale.setScalar(P.D.hd);for(const hn of P.ha)hn.scale.setScalar(P.D.ha);}}
+ B.root.position.set(e.x,0,-e.z);B.root.rotation.y=Math.atan2(-e.hx,e.hz);}
 /* ---------- live 3D preview for the editors ---------- */
 function stadPreview(c2,t,ru,ang){if(!ok)return false;const key=JSON.stringify([t.stad,t.field,t.c1,t.c2,t.c3,t.logo.shape,t.logo.txt,(t.logo.img||'').length,(t.field.img||'').length,ru.id]);
  if(key!==spKey||!scene){const d0=detail;detail=Math.min(1,d0);try{build({home:t,away:t,rules:ru});}finally{detail=d0;}spKey=key;}
  const w=c2.width,h=c2.height,L=ru.L,R=175;ren.setPixelRatio(1);ren.setSize(w,h,false);const was=ren.shadowMap.enabled;ren.shadowMap.enabled=false;cam.aspect=w/h;cam.fov=42;cam.updateProjectionMatrix();cam.position.set(Math.sin(ang)*R,85,-L/2+Math.cos(ang)*R*1.1);cam.lookAt(0,2,-L/2);
  losM.visible=fdM.visible=ring.visible=false;ren.render(scene,cam);ren.shadowMap.enabled=was;try{const x=c2.getContext('2d');x.clearRect(0,0,w,h);x.drawImage(ren.domElement,0,0,w,h);}catch(e){}return true;}
-let pvs={};const PVS={phase:'pre',ball:{carrier:null,x:0,y:0,z:0,state:'dead'},play:{}},REF={c1:'#111111',c2:'#111111',away:'#f4f4f4',pants:'#111111',helmet:'#111111',mask:'#111111'};
+let pvs={},domeInfo=null;const PVS={phase:'pre',ball:{carrier:null,x:0,y:0,z:0,state:'dead'},play:{}},REF={c1:'#111111',c2:'#111111',away:'#f4f4f4',pants:'#111111',helmet:'#111111',mask:'#111111'};
 function preview(c2,t,p,home,yaw,dt,slot){if(!ok)return false;let pv=pvs[slot||'a'];
  if(!pv){pv=pvs[slot||'a']={scene:new T.Scene(),cam:new T.PerspectiveCamera(28,1,.1,60),key:'',B:null,e:null,lt:null};pv.scene.background=col('#0d1117');pv.scene.add(new T.HemisphereLight(0xffffff,0x39424e,.8));const d=new T.DirectionalLight(0xffffff,.95);d.position.set(3,6,5);pv.scene.add(d);const r2=new T.DirectionalLight(0x9db8ff,.45);r2.position.set(-4,3,-5);pv.scene.add(r2);
   const fl=mesh(new T.CircleGeometry(1.3,32),new T.MeshLambertMaterial({color:col('#2f7a36')}),0,0,0,pv.scene);fl.rotation.x=-Math.PI/2;}
@@ -1202,7 +1282,7 @@ function stand(o){const {x,z,len,depth,ry,y0,team,max}=o,g=new T.Group(),h=depth
  const base=mesh(new T.PlaneGeometry(len,sl),mat('#3a3f48',{side:T.DoubleSide}),0,y0+h/2,-depth/2,g);base.rotation.x=-(Math.PI/2-ang);
  mesh(new T.BoxGeometry(len,o.lower?y0:2.2,.7),mat(o.lower?team.c1:'#20242b'),0,o.lower?y0/2:y0-.6,.35,g);mesh(new T.BoxGeometry(len,.12,.12),mat('#d7dbe0'),0,y0+.75,.6,g);
  mesh(new T.BoxGeometry(len,2.6,1.2),mat('#2b3038'),0,y0+h+1.3,-depth-.6,g);if(!o.lower)mesh(new T.BoxGeometry(len,y0-o.under,depth*.7),mat('#191c22'),0,(y0+o.under)/2-.8,-depth*.5,g);
- if(detail>0){const am=mat('#23272e');for(let a=-len/2+9;a<len/2-4;a+=15){const s=mesh(new T.BoxGeometry(.9,.08,sl),am,a,y0+h/2+.05,-depth/2,g);s.rotation.x=-(Math.PI/2-ang);}}
+ if(detail>0){const am=mat('#23272e');for(let a=-len/2+9;a<len/2-4;a+=15){const s=mesh(new T.BoxGeometry(.9,sl,.08),am,a,y0+h/2+.05,-depth/2,g);s.rotation.x=-(Math.PI/2-ang); /* phase 5 (D9): was BoxGeometry(.9,.08,sl) - the long axis sat on the slope NORMAL, so every aisle stood up out of the crowd slope as a pole (up to ~18 units on big decks), in every stadium variant. Long axis now lies along the slope like the deck plane. */}}
  const sp=Math.max(1.02,Math.sqrt(len*depth/max)),cols=Math.floor(len/sp),rows=Math.floor(depth/sp),pts=[];
  for(let r=0;r<rows;r++)for(let k=0;k<cols;k++){const xx=-len/2+(k+.5)*sp;if(detail>0&&((xx+len/2-9+.45)%15+15)%15<.9)continue;if(Math.random()<.05)continue;const t=(r+.5)/rows;pts.push([xx+(Math.random()-.5)*.2,y0+h*t+.12,-depth*t]);}
  people(g,pts,[team.c1,team.c1,team.c1,team.c2,team.c2,'#f2f2f2','#2b3038','#5d6b7a','#8a2d2d','#2d4a8a'],true);scene.add(g);return g;}
@@ -1269,13 +1349,42 @@ function build(cfg){
  for(let z=0;z<=L;z+=10)for(const s of [-1,1]){const m=mesh(new T.BoxGeometry(.5,.9,.06),mat('#ff7a1a'),s*(W/2+1.6),.45,-z,scene);m.rotation.y=Math.PI/2;}
  // lights, roof, press box
  const topY=two?y2+d2*.55+3:dep*.55+4.4;for(const sd of [['w',-1],['e',1]])if(press===sd[0]||press==='both'){const u=UP(sd[0]);mesh(new T.BoxGeometry(5,5,Math.min(70,L*.6)),new T.MeshPhongMaterial({color:col('#1a2a3d'),shininess:120}),sd[1]*(ex+dep+(u?d2+3:2)),(u?y2+d2*.55+3:dep*.55+4.4)+1,-L/2,scene);}
- if(dome){const d=mesh(new T.SphereGeometry(Math.max(L,W)*1.35,28,12,0,Math.PI*2,0,Math.PI/2),mat('#262a31',{side:T.BackSide}),0,0,-L/2,scene);d.scale.y=.46;const lm=new T.MeshBasicMaterial({color:0xfff6dd});for(let i=0;i<18;i++){const a=i/18*Math.PI*2;mesh(new T.BoxGeometry(8,.4,2.6),lm,Math.cos(a)*(W*.95),topY+12,-L/2+Math.sin(a)*(L*.66),scene);}}
- else{const on=night||dusk,lm=new T.MeshBasicMaterial({color:on?0xfffbe8:0x9aa0a8}),pm=mat('#4d535b'),ft=on?flareTex():null;
+ if(dome){/* phase 5 (D10): the dome was a hemisphere sized from the FIELD
+     (max(L,W)*1.35, height x.46) centred at -L/2 - at the larger sizes the
+     stands poked through it and its rim landed inside the footprint. An
+     ellipsoid cannot fix that: the footprint's corners sit at q=1.36 of any
+     ellipse fitted to the sides (measured). So the dome is now an extrusion
+     of the FOOTPRINT itself (rounded rectangle, phase-2 footprint extents):
+     vertical curtain walls on the footprint + a bevelled roof - it wraps by
+     construction at every size. The walls rise to H0=topY+13 - above every
+     stand wall, press box AND the light ring (topY+12), which sits close to
+     the side walls where a low bevel would still be rising. Roof plateau
+     RY=topY+20 clears the centre-hung board's crossbar (topY+13.5). */
+     const fpx=ex+dep+(two?d2+6:5)+2,fnz=L+ez+dep+(two?d2+6:5)+2,fsz=ez+dep+(two?d2+6:5)+2,zc=(fsz-fnz)/2,hfz=(fnz+fsz)/2;
+     const hw=fpx+10,hh=hfz+10,cr=Math.min(dep+10,hw*.45,hh*.45),H0=topY+13,RY=topY+20,bev=Math.min(hw,hh)*.5;
+     const shp=new T.Shape();
+     shp.moveTo(-hw+cr,-hh);shp.lineTo(hw-cr,-hh);shp.absarc(hw-cr,-hh+cr,cr,-Math.PI/2,0);shp.lineTo(hw,hh-cr);shp.absarc(hw-cr,hh-cr,cr,0,Math.PI/2);shp.lineTo(-hw+cr,hh);shp.absarc(-hw+cr,hh-cr,cr,Math.PI/2,Math.PI);shp.lineTo(-hw,-hh+cr);shp.absarc(-hw+cr,-hh+cr,cr,Math.PI,Math.PI*1.5);
+     const dg2=new T.ExtrudeGeometry(shp,{depth:H0,bevelEnabled:true,bevelThickness:RY-H0,bevelSize:bev,bevelSegments:4,steps:1,curveSegments:10});
+     dg2.rotateX(-Math.PI/2); /* shape (x,y) -> world (x, up=extrude dir, z=-y) */
+     const d=mesh(dg2,mat('#262a31',{side:T.BackSide}),0,0,zc,scene);
+     domeInfo={hw,hh,cr,zc,H0,RY,bev};
+     const lm=new T.MeshBasicMaterial({color:0xfff6dd});for(let i=0;i<18;i++){const a=i/18*Math.PI*2;mesh(new T.BoxGeometry(8,.4,2.6),lm,Math.cos(a)*(W*.95),topY+12,-L/2+Math.sin(a)*(L*.66),scene);}}
+else{const on=night||dusk,lm=new T.MeshBasicMaterial({color:on?0xfffbe8:0x9aa0a8}),pm=mat('#4d535b'),ft=on?flareTex():null;
   for(const sx of [-1,1])for(const sz of [.1,.9]){const x=sx*(ex+dep+(two?d2+6:5)),z=-L*sz;mesh(new T.CylinderGeometry(.7,1,topY+18,8),pm,x,(topY+18)/2,z,scene);const p=mesh(new T.BoxGeometry(2,8,16),lm,x-sx*1,topY+19,z,scene);p.rotation.z=sx*.3;
    if(on){const f=new T.Sprite(new T.SpriteMaterial({map:ft,blending:T.AdditiveBlending,depthWrite:false,transparent:true,opacity:.75}));f.scale.set(70,70,1);f.position.set(x-sx*2,topY+19,z);scene.add(f);}}}
  // video board
- const jc=document.createElement('canvas');jc.width=512;jc.height=192;const jt=tex(jc);jumbo={c:jc,t:jt};const jz=-(L+ez+dep+(two?d2+4:2)),jy=topY+7;
- mesh(new T.BoxGeometry(34,13.5,1.4),mat('#15181d'),0,jy,jz-.8,scene);mesh(new T.PlaneGeometry(32,12),new T.MeshBasicMaterial({map:jt}),0,jy,jz,scene);for(const s of [-1,1])mesh(new T.BoxGeometry(1.2,jy,1.2),mat('#2b3038'),s*13,jy/2,jz-1,scene);
+ const jc=document.createElement('canvas');jc.width=512;jc.height=192;const jt=tex(jc);jumbo={c:jc,t:jt};
+ /* phase 5 (D10): in a dome the freestanding north board + posts stood at the
+    rim with the top at topY+13.75 - outside any sane roof. Domes get the
+    centre-hung board real domed stadiums have: midfield, double-sided,
+    hangers to a crossbar under the light ring; the dome's clearance solve
+    above includes it. Open-air keeps the north board + posts. */
+ const jz=dome?-L/2:-(L+ez+dep+(two?d2+4:2)),jy=dome?topY+4.75:topY+7;
+ mesh(new T.BoxGeometry(34,13.5,1.4),mat('#15181d'),0,jy,jz-.8,scene);mesh(new T.PlaneGeometry(32,12),new T.MeshBasicMaterial({map:jt}),0,jy,jz,scene);
+ if(dome){const mp=mesh(new T.PlaneGeometry(32,12),new T.MeshBasicMaterial({map:jt}),0,jy,jz-1.6,scene);mp.rotation.y=Math.PI;
+  for(const s of [-1,1])mesh(new T.BoxGeometry(.5,topY+13.5-(jy+6.75)+.5,.5),mat('#2b3038'),s*13,(topY+13.5+jy+6.75)/2,jz-.8,scene);
+  mesh(new T.BoxGeometry(28,.6,.6),mat('#2b3038'),0,topY+13.5,jz-.8,scene);}
+ else for(const s of [-1,1])mesh(new T.BoxGeometry(1.2,jy,1.2),mat('#2b3038'),s*13,jy/2,jz-1,scene);
  if(cfg.stadGlb&&T.GLTFLoader){for(let i=c0;i<scene.children.length;i++)scene.children[i].visible=false;crowd=[];addStadium(cfg.stadGlb,home.stad.model||{},ru);}
  // surroundings (open-air only): concrete apron, asphalt ring, distant tree/building line
  if(!dome){const ow=ex+dep+(two?d2+6:5)+2,ozn=L+ez+dep+(two?d2+6:5)+2,ozs=ez+dep+(two?d2+6:5)+2,zCtr=(ozs-ozn)/2;
