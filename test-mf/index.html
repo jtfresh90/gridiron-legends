@@ -18,7 +18,9 @@ booting…</div>
 const log = document.getElementById('log');
 function say(s){ log.textContent += '\n' + s; console.log(s); }
 function loadScript(name, base){
-  // Plain script loader for stub modules (e.g. character.js) that set no GLM entry.
+  // Plain script loader for stub modules (e.g. character.js) and chunk
+  // modules (character_p1..p4, mf_body_regularmuscular_p1/p2) that append
+  // to an existing GLM entry instead of setting GLM[name] themselves.
   return new Promise((res, rej)=>{
     const sc = document.createElement('script');
     sc.src = (base || 'models/') + name + '.js';
@@ -66,8 +68,8 @@ function describe(obj, tag){
   try{
     // 1. game character (live modules at ../models/ — byte-identical to the prototype's copies)
     await loadScript('character', '../models/');
-    await loadModule('character_p1', '../models/'); await loadModule('character_p2', '../models/');
-    await loadModule('character_p3', '../models/'); await loadModule('character_p4', '../models/');
+    await loadScript('character_p1', '../models/'); await loadScript('character_p2', '../models/');
+    await loadScript('character_p3', '../models/'); await loadScript('character_p4', '../models/');
     const ch = parseFBX(window.GLM['character']);
     describe(ch, 'game character');
     ch.position.set(-1.6, 0, 0); scene.add(ch);
@@ -89,8 +91,8 @@ function describe(obj, tag){
     }
     // 4. MF body (native 166-bone skeleton, split stub + 2 chunks) + original MF idle clip
     await loadScript('mf_body_regularmuscular');
-    await loadModule('mf_body_regularmuscular_p1');
-    await loadModule('mf_body_regularmuscular_p2');
+    await loadScript('mf_body_regularmuscular_p1');
+    await loadScript('mf_body_regularmuscular_p2');
     const bodyB64 = window.GLM['mf_body_regularmuscular'];
     const body = parseFBX(bodyB64); describe(body, 'mf_body_regularmuscular');
     body.position.set(1.6, 0, 0); scene.add(body);
