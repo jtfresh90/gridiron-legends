@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>MF Integration Prototype — test-mf</title>
+<style>body{margin:0;font-family:monospace;background:#222;color:#ddd}
+#log{position:fixed;left:0;top:0;max-width:520px;background:rgba(0,0,0,.7);padding:8px;font-size:12px;white-space:pre-wrap;z-index:2}
+canvas{display:block}</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/FBXLoader.js"></script>
+</head>
+<body>
+<div id="log">MF Integration Prototype — test build (test-mf)
+Left: game character playing the retargeted MF idle, MF helmet + facemask on its head.
+Right: MF body (native 166-bone skeleton) playing its original MF idle.
+booting…</div>
+<script>
+const log = document.getElementById('log');
+function say(s){ log.textContent += '\n' + s; console.log(s); }
+function loadScript(name, base){
+  // Plain script loader for stub modules (e.g. character.js) that set no GLM entry.
+  return new Promise((res, rej)=>{
+    const sc = document.createElement('script');
+    sc.src = (base || 'models/') + name + '.js';
+    sc.onload = ()=>res(true);
+    sc.onerror = ()=>rej(new Error('could not download ' + sc.src));
+    document.head.appendChild(sc);
+  });
+}
+function loadModule(name, base){
+  return new Promise((res, rej)=>{
+    const sc = document.createElement('script');
+    sc.src = (base || 'models/') + name + '.js';
+    sc.onload = ()=>{ if(window.GLM && window.GLM[name]) res(window.GLM[name]); else rej(new Error('GLM['+name+'] missing')); };
+    sc.onerror = ()=>rej(new Error('could not download ' + sc.src));
+    document.head.appendChild(sc);
+  });
+}
+function parseFBX(b64){
+  const bin = atob(b64);
+  const buf = new ArrayBuffer(bin.length);
+  const u8 = new Uint8Array(buf);
+  for(let i=0;i<bin.length;i++) u8[i] = bin.charCodeAt(i);
+  return new THREE.FBXLoader().parse(buf, '');
+}
+function describe(obj, tag){
+  let meshes=0, verts=0, bones=0, clips=0;
+  obj.traverse(o=>{ if(o.isMesh){ meshes++; verts += o.geometry.attributes.position.count; }
+    if(o.isBone) bones++; });
+  if(obj.animations) clips = obj.animations.length;
+  say(tag+': meshes='+meshes+' verts='+verts+' bones='+bones+' clips='+clips);
+  if(obj.animations) obj.animations.forEach(a=>say('   clip '+a.name+' dur='+a.duration.toFixed(2)+'s tracks='+a.tracks.length));
+  return {meshes, verts, bones, clips};
+}
+(async ()=>{
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x303035);
+  const cam = new THREE.PerspectiveCamera(45, innerWidth/innerHeight, 0.1, 100);
+  cam.position.set(4.5, -7.5, 3.2); cam.lookAt(0, 0, 2.0);
+  const ren = new THREE.WebGLRenderer({antialias:true});
+  ren.setSize(innerWidth, innerHeight); document.body.appendChild(ren.domElement);
+  scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.9); sun.position.set(3,-4,6); scene.add(sun);
+  const grid = new THREE.GridHelper(10, 10); grid.rotation.x = Math.PI/2; scene.add(grid);
+  const mixers = [];
+  try{
+    // 1. game character (live modules at ../models/ — byte-identical to the prototype's copies)
+    await loadScript('character', '../models/');
+    await loadModule('character_p1', '../models/'); await loadModule('character_p2', '../models/');
+    await loadModule('character_p3', '../models/'); await loadModule('character_p4', '../models/');
+    const ch = parseFBX(window.GLM['character']);
+    describe(ch, 'game character');
+    ch.position.set(-1.6, 0, 0); scene.add(ch);
+    // find the head bone for the MF helmet attach
+    let headBone = null; ch.traverse(o=>{ if(o.isBone && /Head$/.test(o.name) && !/Top/.test(o.name)) headBone = o; });
+    say('head bone: ' + (headBone ? headBone.name : 'NOT FOUND'));
+    // 2. retargeted MF idle clip onto the game character
+    const idleB64 = await loadModule('mf_idle');
+    const idleObj = parseFBX(idleB64); describe(idleObj, 'mf_idle (retargeted)');
+    const idleClip = idleObj.animations[0];
+    const mixer1 = new THREE.AnimationMixer(ch);
+    mixer1.clipAction(idleClip).play(); mixers.push(mixer1);
+    // 3. MF helmet + facemask attached to the game head (game's helmInstance pattern)
+    for(const m of ['mf_helmet01','mf_facemask01']){
+      const b64 = await loadModule(m);
+      const o = parseFBX(b64); describe(o, m);
+      const mesh = o.children.find(c=>c.isMesh) || o;
+      if(headBone){ headBone.attach(mesh); } else { scene.add(mesh); }
+    }
+    // 4. MF body (native 166-bone skeleton, split stub + 2 chunks) + original MF idle clip
+    await loadScript('mf_body_regularmuscular');
+    await loadModule('mf_body_regularmuscular_p1');
+    await loadModule('mf_body_regularmuscular_p2');
+    const bodyB64 = window.GLM['mf_body_regularmuscular'];
+    const body = parseFBX(bodyB64); describe(body, 'mf_body_regularmuscular');
+    body.position.set(1.6, 0, 0); scene.add(body);
+    const origB64 = await loadModule('mf_idle_orig');
+    const origObj = parseFBX(origB64); describe(origObj, 'mf_idle_orig (MF native)');
+    const mixer2 = new THREE.AnimationMixer(body);
+    mixer2.clipAction(origObj.animations[0]).play(); mixers.push(mixer2);
+    // 5. retargeted run + tackle clips parse (not played here, just verified)
+    for(const m of ['mf_run','mf_tackle']){
+      const b64 = await loadModule(m);
+      const o = parseFBX(b64); describe(o, m+' (retargeted, parse-only)');
+    }
+    say('ALL MODULES LOADED + PARSED — prototype boot OK');
+  }catch(e){ say('ERROR: ' + e.message); }
+  const clock = new THREE.Clock();
+  (function tick(){
+    requestAnimationFrame(tick);
+    const dt = Math.min(clock.getDelta(), 0.05);
+    mixers.forEach(m=>m.update(dt));
+    ren.render(scene, cam);
+  })();
+})();
+</script>
+</body>
+</html>
