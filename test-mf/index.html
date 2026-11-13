@@ -59,9 +59,16 @@ function describe(obj, tag){
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x303035);
   const cam = new THREE.PerspectiveCamera(45, innerWidth/innerHeight, 0.1, 100);
-  cam.position.set(4.5, -7.5, 3.2); cam.lookAt(0, 0, 2.0);
+  // Portrait phones need a further camera so both bodies fit the frame.
+  function frameCamera(){
+    cam.aspect = innerWidth/innerHeight;
+    cam.position.set(4.5, cam.aspect < 1 ? -11 : -7.5, 3.2);
+    cam.lookAt(0, 0, 2.0); cam.updateProjectionMatrix();
+  }
+  frameCamera();
   const ren = new THREE.WebGLRenderer({antialias:true});
   ren.setSize(innerWidth, innerHeight); document.body.appendChild(ren.domElement);
+  addEventListener('resize', ()=>{ frameCamera(); ren.setSize(innerWidth, innerHeight); });
   scene.add(new THREE.AmbientLight(0xffffff, 0.6));
   const sun = new THREE.DirectionalLight(0xffffff, 0.9); sun.position.set(3,-4,6); scene.add(sun);
   const grid = new THREE.GridHelper(10, 10); grid.rotation.x = Math.PI/2; scene.add(grid);
@@ -73,7 +80,19 @@ function describe(obj, tag){
     await loadScript('character_p3', '../models/'); await loadScript('character_p4', '../models/');
     const ch = parseFBX(window.GLM['character']);
     describe(ch, 'game character');
-    ch.position.set(-1.6, 0, 0); scene.add(ch);
+    // Shared-skeleton rebind: the 8 meshes are bound to 8 separate 41-bone
+    // hierarchies (same bind pose); the mixer drives the first match only.
+    // Rebind all meshes to the shoes' skeleton at the bind frame, before any
+    // root transform, so the idle clip drives every mesh.
+    ch.updateMatrixWorld(true);
+    const chMeshes = []; ch.traverse(o=>{ if(o.isSkinnedMesh) chMeshes.push(o); });
+    const shared = chMeshes.find(m=>m.name==='shoes').skeleton;
+    for(const m of chMeshes){ if(m.skeleton!==shared){ m.skeleton = shared; m.bind(shared, m.matrixWorld); } }
+    say('rebind: '+chMeshes.length+' meshes -> shared skeleton (shoes)');
+    // Character file space is Y-up, 174.491 units tall; the page is Z-up
+    // with feet at z=0 and the character 4.221 tall.
+    ch.rotation.x = Math.PI/2; ch.scale.setScalar(4.221/174.491); ch.position.set(-1.3, 0, 0);
+    scene.add(ch);
     // find the head bone for the MF helmet attach
     let headBone = null; ch.traverse(o=>{ if(o.isBone && /Head$/.test(o.name) && !/Top/.test(o.name)) headBone = o; });
     say('head bone: ' + (headBone ? headBone.name : 'NOT FOUND'));
@@ -81,6 +100,11 @@ function describe(obj, tag){
     const idleB64 = await loadModule('mf_idle');
     const idleObj = parseFBX(idleB64); describe(idleObj, 'mf_idle (retargeted)');
     const idleClip = idleObj.animations[0];
+    // The retarget baked the MF-frame pelvis translation (hips y~243 in a
+    // 422-tall frame); the game hips bind at y~104. Strip the hips POSITION
+    // track so the character stays planted — rotations carry the idle.
+    idleClip.tracks = idleClip.tracks.filter(t=>!(/Hips/i.test(t.name) && /\.position$/.test(t.name)));
+    say('mf_idle: stripped hips position track, '+idleClip.tracks.length+' tracks left');
     const mixer1 = new THREE.AnimationMixer(ch);
     mixer1.clipAction(idleClip).play(); mixers.push(mixer1);
     // 3. MF helmet + facemask attached to the game head (game's helmInstance pattern)
@@ -88,7 +112,16 @@ function describe(obj, tag){
       const b64 = await loadModule(m);
       const o = parseFBX(b64); describe(o, m);
       const mesh = o.children.find(c=>c.isMesh) || o;
-      if(headBone){ headBone.attach(mesh); } else { scene.add(mesh); }
+      if(headBone){
+        // Geometry is absolute in the 422-frame (MF body scale); the game
+        // character is 174-frame. Bake the FBX node transform (rot -90deg X,
+        // scale x100) into the geometry, scale to the character frame, then
+        // attach() preserves the bind world transform under the head bone.
+        if(!mesh.isSkinnedMesh){ mesh.updateMatrix(); mesh.geometry.applyMatrix4(mesh.matrix); mesh.position.set(0,0,0); mesh.quaternion.identity(); mesh.scale.set(1,1,1); }
+        mesh.scale.setScalar(174.491/422.1);
+        ch.add(mesh); ch.updateMatrixWorld(true);
+        headBone.attach(mesh);
+      } else { scene.add(mesh); }
     }
     // 4. MF body (native 166-bone skeleton, split stub + 2 chunks) + original MF idle clip
     await loadScript('mf_body_regularmuscular');
@@ -96,7 +129,9 @@ function describe(obj, tag){
     await loadScript('mf_body_regularmuscular_p2');
     const bodyB64 = window.GLM['mf_body_regularmuscular'];
     const body = parseFBX(bodyB64); describe(body, 'mf_body_regularmuscular');
-    body.position.set(1.6, 0, 0); scene.add(body);
+    // MF body file space is Y-up, 422.1 units tall; same Z-up 4.221 framing.
+    body.rotation.x = Math.PI/2; body.scale.setScalar(4.221/422.1); body.position.set(1.3, 0, 0);
+    scene.add(body);
     const origB64 = await loadModule('mf_idle_orig');
     const origObj = parseFBX(origB64); describe(origObj, 'mf_idle_orig (MF native)');
     const mixer2 = new THREE.AnimationMixer(body);
