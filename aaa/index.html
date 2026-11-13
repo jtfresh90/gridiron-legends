@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Gridiron Legends — AAA Showcase (Phase 1)</title>
+<style>
+  html,body{margin:0;padding:0;height:100%;overflow:hidden;background:#0b1220;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:#eef2f7}
+  #app{position:fixed;inset:0}
+  canvas{display:block}
+  #hud{position:fixed;top:0;left:0;right:0;display:flex;justify-content:space-between;align-items:flex-start;padding:10px 12px;pointer-events:none;z-index:5}
+  #title{font-size:17px;font-weight:700;text-shadow:0 1px 3px rgba(0,0,0,.7)}
+  #title small{display:block;font-size:11px;font-weight:400;opacity:.85}
+  #backend{pointer-events:auto;background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.25);border-radius:999px;padding:6px 12px;font-size:12px;font-weight:600;white-space:nowrap}
+  #backend.webgpu{border-color:#4ade80;color:#bbf7d0}
+  #backend.webgl{border-color:#fbbf24;color:#fef3c7}
+  #backend.none{border-color:#f87171;color:#fecaca}
+  #panel{position:fixed;left:0;right:0;bottom:0;padding:10px 12px 14px;background:linear-gradient(transparent,rgba(0,0,0,.72));z-index:5}
+  .row{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:8px}
+  .row:first-child{margin-top:0}
+  button{pointer-events:auto;background:rgba(255,255,255,.12);color:#fff;border:1px solid rgba(255,255,255,.35);border-radius:999px;padding:10px 16px;font-size:14px;font-weight:600;cursor:pointer;-webkit-tap-highlight-color:transparent}
+  button.on{background:#f97316;border-color:#f97316;color:#fff}
+  button:active{transform:scale(.97)}
+  #status{position:fixed;left:50%;top:44%;transform:translate(-50%,-50%);text-align:center;font-size:14px;background:rgba(0,0,0,.6);padding:14px 18px;border-radius:12px;max-width:82vw;z-index:6;display:none}
+  #stats{position:fixed;right:10px;bottom:118px;font-size:11px;line-height:1.5;text-align:right;color:rgba(255,255,255,.85);text-shadow:0 1px 2px rgba(0,0,0,.8);z-index:5;pointer-events:none}
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three.webgpu.js",
+    "three/addons/": "./vendor/addons/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="app"></div>
+<div id="hud">
+  <div id="title">Gridiron Legends — AAA Showcase<small>Phase 1 &middot; three.js r187 &middot; detailed player, Broncos / Washington kits</small></div>
+  <div id="backend" class="none">starting…</div>
+</div>
+<div id="stats"></div>
+<div id="status"></div>
+<div id="panel">
+  <div class="row" id="kitRow">
+    <button data-kit="broncos" class="on">Denver Broncos #10</button>
+    <button data-kit="washington">Washington #16</button>
+  </div>
+  <div class="row" id="animRow">
+    <button data-anim="idle" class="on">Idle</button>
+    <button data-anim="running">Run</button>
+    <button data-anim="quarterback_pass">Throw</button>
+  </div>
+  <div class="row" id="qualRow">
+    <button data-qual="high" class="on">High quality</button>
+    <button data-qual="medium">Medium quality</button>
+  </div>
+</div>
+<!-- Binary assets are base64 JS chunk modules (window.GLM), the repo's established
+     pattern: snapshot-push is UTF-8/text-only, so no binary file can be pushed.
+     Classic scripts run in order before the module script below. -->
+<script src="models/player_aaa_p1.js"></script>
+<script src="models/player_aaa_p2.js"></script>
+<script src="models/player_aaa_p3.js"></script>
+<script src="models/player_aaa_p4.js"></script>
+<script src="models/player_aaa_p5.js"></script>
+<script src="clips/quarterback_pass.js"></script>
+<script src="clips/idle.js"></script>
+<script src="clips/running.js"></script>
+<script src="textures/broncos_jersey.js"></script>
+<script src="textures/broncos_pants.js"></script>
+<script src="textures/decal_horse.js"></script>
+<script src="textures/decal_w.js"></script>
+<script src="textures/jersey_fabric_normal.js"></script>
+<script src="textures/washington_jersey.js"></script>
+<script src="textures/washington_pants.js"></script>
+<script type="module">
+import * as THREE from 'three';
+import { WebGPURenderer } from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+const $ = s => document.querySelector(s);
+const badge = $('#backend'), statusEl = $('#status');
+function setStatus(msg){ if(msg){ statusEl.style.display='block'; statusEl.textContent=msg; } else statusEl.style.display='none'; }
+function setBadge(text, cls){ badge.textContent=text; badge.className=cls; }
+
+const MODEL_SCALE = 0.45;          // native FBX units (~4.2 tall) -> ~1.9 m
+const KITS = {
+  broncos:    { shell: 0x0a2342, cage: 0xc0c0c0, stripes: false, decal: 'decal_horse',
+                jersey: 'broncos_jersey', pants: 'broncos_pants', ball: true },
+  washington: { shell: 0x5e0e18, cage: 0xd4a017, stripes: true,  decal: 'decal_w',
+                jersey: 'washington_jersey', pants: 'washington_pants', ball: true },
+};
+const CLIP_FILES = { idle: 'idle', running: 'running', quarterback_pass: 'quarterback_pass' }; // GLM keys
+const BALL_VISIBLE = { idle: true, running: false, quarterback_pass: true };
+const DETAIL_PREFIXES = ['vent_', 'stud_', 'lace_', 'helmet_padding_band', 'ear_pad_'];
+
+let renderer, scene, camera, controls, clock;
+let modelRoot, mixer, clips = {}, actions = {}, currentAnim = 'idle';
+let mats = {}, stripeNode = null, ballNode = null, detailNodes = [];
+let kitTextures = {};
+
+function makeFieldTexture(){
+  const c = document.createElement('canvas'); c.width = 2048; c.height = 1024;
+  const g = c.getContext('2d');
+  const W = 2048, H = 1024, YARDS = 120, WIDE = 53.333;
+  const pxPerYard = W / YARDS, pxPerYardW = H / WIDE;
+  // base + mowing stripes (5-yard bands)
+  for (let i = 0; i < 24; i++){
+    g.fillStyle = i % 2 ? '#2f7d2e' : '#2a6f2a';
+    g.fillRect(i * W / 24, 0, W / 24 + 1, H);
+  }
+  // end zones
+  g.fillStyle = '#0a2342';
+  g.fillRect(0, 0, 10 * pxPerYard, H);
+  g.fillRect(W - 10 * pxPerYard, 0, 10 * pxPerYard, H);
+  g.fillStyle = '#fff'; g.font = `bold ${Math.round(H * 0.09)}px sans-serif`;
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.save(); g.translate(5 * pxPerYard, H / 2); g.rotate(-Math.PI / 2); g.fillText('GRIDIRON', 0, 0); g.restore();
+  g.save(); g.translate(W - 5 * pxPerYard, H / 2); g.rotate(Math.PI / 2); g.fillText('GRIDIRON', 0, 0); g.restore();
+  // yard lines + numbers
+  g.strokeStyle = '#fff'; g.fillStyle = '#fff';
+  g.lineWidth = 4;
+  for (let y = 10; y <= 110; y += 5){
+    const x = y * pxPerYard;
+    g.beginPath(); g.moveTo(x, 0); g.lineTo(x, H); g.stroke();
+    if (y % 10 === 0){
+      const num = y <= 50 ? y : 120 - y;
+      g.font = `bold ${Math.round(H * 0.11)}px sans-serif`;
+      g.fillText(String(num), x, H * 0.22);
+      g.fillText(String(num), x, H * 0.78);
+    }
+  }
+  // hash marks
+  g.lineWidth = 3;
+  for (let y = 11; y < 110; y++){
+    const x = y * pxPerYard;
+    g.beginPath(); g.moveTo(x, H * 0.5 - 40); g.lineTo(x, H * 0.5 - 22); g.stroke();
+    g.beginPath(); g.moveTo(x, H * 0.5 + 22); g.lineTo(x, H * 0.5 + 40); g.stroke();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 8;
+  return t;
+}
+function makeSkyTexture(){
+  const c = document.createElement('canvas'); c.width = 16; c.height = 512;
+  const g = c.getContext('2d');
+  const gr = g.createLinearGradient(0, 0, 0, 512);
+  gr.addColorStop(0.0, '#2f6fd0'); gr.addColorStop(0.45, '#7fb2e8');
+  gr.addColorStop(0.62, '#cfe8f5'); gr.addColorStop(0.72, '#e8f0e8'); gr.addColorStop(1.0, '#dfe8d8');
+  g.fillStyle = gr; g.fillRect(0, 0, 16, 512);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+function findMat(root, name){
+  let found = null;
+  root.traverse(o => { if (o.material && o.material.name === name) found = o.material; });
+  return found;
+}
+function findNode(root, name){
+  let found = null;
+  root.traverse(o => { if (o.name === name) found = o; });
+  return found;
+}
+
+// Base64 chunk modules (window.GLM) -> binary. The chunk scripts run before
+// this module and append into GLM[key]; the full base64 string is decoded
+// here with atob. Chunk order in the page is the concatenation order.
+function b64ToU8(b64){
+  const bin = atob(b64);
+  const u8 = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  return u8;
+}
+function glmBytes(key){
+  const b64 = (window.GLM || {})[key];
+  if (typeof b64 !== 'string' || !b64.length) throw new Error('asset module missing: ' + key);
+  return b64ToU8(b64).buffer;
+}
+
+async function initRenderer(){
+  const r = new WebGPURenderer({ antialias: true });
+  await r.init();                       // falls back to WebGL 2 automatically when WebGPU is unavailable
+  r.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  r.setSize(window.innerWidth, window.innerHeight);
+  r.shadowMap.enabled = true;
+  r.shadowMap.type = THREE.PCFSoftShadowMap;
+  r.toneMapping = THREE.ACESFilmicToneMapping;
+  r.toneMappingExposure = 1.05;
+  return r;
+}
+
+async function main(){
+  setStatus('Starting renderer…');
+  try {
+    renderer = await initRenderer();
+  } catch (e) {
+    setBadge('No WebGPU / WebGL', 'none');
+    setStatus('This device could not start a 3D renderer (no WebGPU and no WebGL 2). ' + (e && e.message ? e.message : ''));
+    return;
+  }
+  const isGPU = renderer.backend && renderer.backend.isWebGPUBackend === true;
+  setBadge(isGPU ? 'WebGPU' : 'WebGL 2 (fallback)', isGPU ? 'webgpu' : 'webgl');
+  $('#app').appendChild(renderer.domElement);
+
+  scene = new THREE.Scene();
+  scene.fog = new THREE.Fog(0xcfe8f5, 90, 320);
+  camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 800);
+  camera.position.set(3.4, 2.1, -5.2);
+  controls = new OrbitControls(camera, renderer.domElement);
+  controls.target.set(0, 1.05, 0);
+  controls.enableDamping = true;
+  controls.maxPolarAngle = Math.PI * 0.52;
+  controls.minDistance = 1.2; controls.maxDistance = 40;
+  controls.update();
+
+  // sky dome + lights + environment
+  const sky = new THREE.Mesh(
+    new THREE.SphereGeometry(320, 32, 20),
+    new THREE.MeshBasicMaterial({ map: makeSkyTexture(), side: THREE.BackSide, fog: false }));
+  scene.add(sky);
+  const sun = new THREE.DirectionalLight(0xfff2dd, 2.6);
+  sun.position.set(28, 46, 18);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.camera.left = -12; sun.shadow.camera.right = 12;
+  sun.shadow.camera.top = 12; sun.shadow.camera.bottom = -12;
+  sun.shadow.camera.far = 140;
+  sun.shadow.bias = -0.0004;
+  scene.add(sun);
+  scene.add(new THREE.HemisphereLight(0xbfd9ff, 0x3a5f2a, 0.85));
+  try {
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    if ('environmentIntensity' in scene) scene.environmentIntensity = 0.35;
+  } catch (e) { /* environment is a nicety, not a requirement */ }
+
+  // field
+  const field = new THREE.Mesh(
+    new THREE.PlaneGeometry(110, 49),
+    new THREE.MeshStandardMaterial({ map: makeFieldTexture(), roughness: 0.95, metalness: 0 }));
+  field.rotation.x = -Math.PI / 2;
+  field.receiveShadow = true;
+  scene.add(field);
+
+  // player — the GLB lives in base64 JS chunk modules (window.GLM["player_aaa"],
+  // models/player_aaa_p1..p5.js, loaded by the classic script tags above).
+  // Snapshot-push is UTF-8/text-only, so no binary file can be pushed; the
+  // chunks are atob-decoded here and parsed as one GLB.
+  setStatus('Decoding player model…');
+  const modelBytes = glmBytes('player_aaa');
+  const gltf = await new GLTFLoader().parseAsync(modelBytes, '');
+  modelRoot = gltf.scene;
+  modelRoot.scale.setScalar(MODEL_SCALE);
+  modelRoot.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = false; } });
+  scene.add(modelRoot);
+  mats.shell = findMat(modelRoot, 'helmet_shell');
+  mats.cage = findMat(modelRoot, 'cage');
+  mats.jersey = findMat(modelRoot, 'jersey');
+  mats.pants = findMat(modelRoot, 'pants');
+  mats.decal = findMat(modelRoot, 'decal');
+  mats.decalLeft = findMat(modelRoot, 'decal_left');
+  stripeNode = findNode(modelRoot, 'stripe_washington');
+  ballNode = findNode(modelRoot, 'football');
+  modelRoot.traverse(o => { if (DETAIL_PREFIXES.some(p => o.name.startsWith(p))) detailNodes.push(o); });
+
+  // kit textures (loaded once, swapped by the kit buttons) — each PNG is a
+  // base64 JS module (window.GLM), decoded to a Blob object URL.
+  const texLoader = new THREE.TextureLoader();
+  async function loadTex(key){
+    const b64 = (window.GLM || {})[key];
+    if (typeof b64 !== 'string' || !b64.length) throw new Error('texture module missing: ' + key);
+    const url = URL.createObjectURL(new Blob([b64ToU8(b64)], { type: 'image/png' }));
+    try {
+      const t = await texLoader.loadAsync(url);
+      t.colorSpace = THREE.SRGBColorSpace;
+      return t;
+    } finally { URL.revokeObjectURL(url); }
+  }
+  kitTextures = {
+    broncos:    { jersey: await loadTex(KITS.broncos.jersey),    pants: await loadTex(KITS.broncos.pants),    decal: await loadTex(KITS.broncos.decal) },
+    washington: { jersey: await loadTex(KITS.washington.jersey), pants: await loadTex(KITS.washington.pants), decal: await loadTex(KITS.washington.decal) },
+  };
+
+  // animation clips (same 41-bone Mixamo rig as the model) — each FBX is a
+  // base64 JS module (window.GLM), atob-decoded and parsed in place.
+  setStatus('Loading animation clips…');
+  mixer = new THREE.AnimationMixer(modelRoot);
+  const fbxLoader = new FBXLoader();
+  for (const [name, key] of Object.entries(CLIP_FILES)){
+    const obj = fbxLoader.parse(glmBytes(key), '');
+    if (!obj.animations || !obj.animations.length) throw new Error('no animation in ' + key);
+    clips[name] = obj.animations[0];
+    actions[name] = mixer.clipAction(clips[name]);
+    actions[name].setLoop(THREE.LoopRepeat);
+  }
+  actions.idle.play();
+
+  applyKit('broncos');
+  applyAnim('idle');
+  applyQuality('high');
+
+  // stats
+  let tris = 0; modelRoot.traverse(o => { if (o.isMesh && o.geometry) tris += (o.geometry.index ? o.geometry.index.count : o.geometry.attributes.position.count) / 3; });
+  const glbBytes = 12579832;   // v6 player_aaa.glb (update when the model is rebuilt)
+  $('#stats').textContent =
+    `three r187 · ${isGPU ? 'WebGPU' : 'WebGL 2'}\n` +
+    `player ${Math.round(tris).toLocaleString()} tris · GLB ${(glbBytes / 1048576).toFixed(1)} MB\n` +
+    `clips idle / run / throw · 41-bone Mixamo rig`;
+
+  setStatus('');
+  wireUI();
+  clock = new THREE.Clock();
+  renderer.setAnimationLoop(() => {
+    const dt = Math.min(clock.getDelta(), 0.05);
+    mixer.update(dt);
+    controls.update();
+    renderer.render(scene, camera);
+  });
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+}
+
+function applyKit(kitName){
+  const k = KITS[kitName], t = kitTextures[kitName];
+  if (mats.shell) mats.shell.color.setHex(k.shell);
+  if (mats.cage) mats.cage.color.setHex(k.cage);
+  if (stripeNode) stripeNode.visible = k.stripes;
+  if (t){
+    if (mats.jersey){ mats.jersey.map = t.jersey; mats.jersey.needsUpdate = true; }
+    if (mats.pants){ mats.pants.map = t.pants; mats.pants.needsUpdate = true; }
+    if (mats.decal){ mats.decal.map = t.decal; mats.decal.needsUpdate = true; }
+    if (mats.decalLeft){ mats.decalLeft.map = t.decal; mats.decalLeft.needsUpdate = true; }
+  }
+  document.querySelectorAll('#kitRow button').forEach(b => b.classList.toggle('on', b.dataset.kit === kitName));
+}
+function applyAnim(name){
+  if (!actions[name]) return;
+  const prev = actions[currentAnim];
+  currentAnim = name;
+  if (prev && prev !== actions[name]){ prev.fadeOut(0.25); }
+  actions[name].reset().fadeIn(0.25).play();
+  if (ballNode) ballNode.visible = !!BALL_VISIBLE[name];
+  document.querySelectorAll('#animRow button').forEach(b => b.classList.toggle('on', b.dataset.anim === name));
+}
+function applyQuality(q){
+  const high = q === 'high';
+  if (renderer){
+    renderer.shadowMap.enabled = high;
+    renderer.setPixelRatio(high ? Math.min(window.devicePixelRatio || 1, 2) : 1);
+  }
+  scene.traverse(o => { if (o.isDirectionalLight) o.castShadow = high; });
+  detailNodes.forEach(o => { o.visible = high; });
+  document.querySelectorAll('#qualRow button').forEach(b => b.classList.toggle('on', b.dataset.qual === q));
+}
+function wireUI(){
+  document.querySelectorAll('#kitRow button').forEach(b => b.addEventListener('click', () => applyKit(b.dataset.kit)));
+  document.querySelectorAll('#animRow button').forEach(b => b.addEventListener('click', () => applyAnim(b.dataset.anim)));
+  document.querySelectorAll('#qualRow button').forEach(b => b.addEventListener('click', () => applyQuality(b.dataset.qual)));
+}
+
+main().catch(e => {
+  console.error(e);
+  setBadge('Failed to start', 'none');
+  setStatus('Could not start the showcase: ' + (e && e.message ? e.message : e));
+});
+</script>
+</body>
+</html>
