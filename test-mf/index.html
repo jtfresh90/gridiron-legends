@@ -62,6 +62,10 @@ function describe(obj, tag){
   // Portrait phones need a further camera so both bodies fit the frame.
   function frameCamera(){
     cam.aspect = innerWidth/innerHeight;
+    // The world is Z-up (feet at z=0, heads at z~4.2): the camera's up must
+    // be +Z, or the ground renders as a vertical wall and standing figures
+    // read as lying down (Joshua's 15:30 phone screenshot).
+    cam.up.set(0, 0, 1);
     cam.position.set(4.5, cam.aspect < 1 ? -11 : -7.5, 3.2);
     cam.lookAt(0, 0, 2.0); cam.updateProjectionMatrix();
   }
