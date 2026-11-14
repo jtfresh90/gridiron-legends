@@ -1664,16 +1664,6 @@ function optChar(o,cell,CK){CK=CK||CELLK;const meshes=[];o.traverse(m=>{if(m.isS
   if(m.name==='Body_3_2'){const hx=wp.mixamorigHips?wp.mixamorigHips.x:0,L0=wp.mixamorigLeftUpLeg,lx=L0?Math.abs(L0.x-hx):8,zc=L0?L0.z:0;for(let id=i0;id<CN.length;id++){const X=P[id*3]/CN[id],Y=P[id*3+1]/CN[id],Z=P[id*3+2]/CN[id];U[id*2]=Math.abs(X-hx)>lx*1.02?Math.max(.06,Math.min(.94,.5+(Z-zc)/26)):.02;U[id*2+1]=(Y-pY0)/((pY1-pY0)||1);}}
   if(arm)for(let id=i0;id<CN.length;id++){if(limb(id)!==1)continue;U[id*2]=.004;U[id*2+1]=.996;}}
  const nv=CN.length,pos=new Float32Array(nv*3);for(let i=0;i<nv;i++){pos[i*3]=P[i*3]/CN[i];pos[i*3+1]=P[i*3+1]/CN[i];pos[i*3+2]=P[i*3+2]/CN[i];}if(tris[3].length)sideUV(pos,new Set(tris[3]),U);
- /* fix5(1): inflate shirt-class torso verts radially off the Hips->Neck axis so the
-    body can never poke through the jersey (2 model units at the belt, 4 at the neck) */
- {const _hip=wp.mixamorigHips,_nk=wp.mixamorigNeck;
-  if(_hip&&_nk&&tris[1].length){const _neckY=_nk.y,_ax=_nk.x-_hip.x,_az=_nk.z-_hip.z,_seen=new Set(tris[1]);
-   for(const _id of _seen){const _bn=bones[DB[_id]]&&bones[DB[_id]].name||'';if(!/Spine|Neck|Hips/.test(_bn))continue;
-    const _y=pos[_id*3+1];if(_y<belt||_y>_neckY+5)continue;
-    const _t=(_y-_hip.y)/((_neckY-_hip.y)||1),_axp=_hip.x+_ax*_t,_azp=_hip.z+_az*_t;
-    let _dx=pos[_id*3]-_axp,_dz=pos[_id*3+2]-_azp;const _dl=Math.hypot(_dx,_dz);if(_dl<1e-6)continue;
-    const _amt=2+2*Math.max(0,Math.min(1,(_y-belt)/((_neckY-belt)||1)));_dx/=_dl;_dz/=_dl;
-    pos[_id*3]+=_dx*_amt;pos[_id*3+2]+=_dz*_amt;}}}
  const geoB=new T.BufferGeometry(),index=[];let nt=0;
  for(let c=0;c<KIT_N;c++){const t=tris[c],seen=new Set(),st=index.length;for(let k=0;k<t.length;k+=3){let a=t[k],b=t[k+1],d=t[k+2];if(nv<131072){while(a>b||a>d){const x=a;a=b;b=d;d=x;}const key=(a*131072+b)*131072+d;if(seen.has(key))continue;seen.add(key);}index.push(a,b,d);}if(index.length>st)geoB.addGroup(st,index.length-st,c);nt+=(index.length-st)/3;}
  geoB.setAttribute('position',new T.BufferAttribute(pos,3));geoB.setAttribute('uv',new T.BufferAttribute(new Float32Array(U),2));geoB.setAttribute('skinIndex',new T.BufferAttribute(new Uint16Array(SI),4));geoB.setAttribute('skinWeight',new T.BufferAttribute(new Float32Array(SW),4));
@@ -1683,7 +1673,7 @@ function optChar(o,cell,CK){CK=CK||CELLK;const meshes=[];o.traverse(m=>{if(m.isS
 const KM={};function km(k,f){if(KM[k])return KM[k];const v=f();try{if(v&&typeof v==='object'&&v.isMaterial)v.userData.kmk=k;}catch(e){}return KM[k]=v;}
 /* back plate equipped: the jersey is rolled up above the plate, so the band from the belt to the bottom of the plate shows
    either skin or an undershirt (kit setting), with a darker rolled hem above it */
-function rolledJersey(base,p,t,tone){const K=kitOf(t),us=K.bpu===1?(K.bpuc||'#1b1d21'):tone,hy=(CH.hipY||100),top=Math.max(hy*1.2,((CH.pan&&CH.pan.sy)||131.81)-4),key='JRL'+base.uuid+us+top;return km(key,()=>{const m=base.clone();const c=col(us);
+function rolledJersey(base,p,t,tone){const K=kitOf(t),us=K.bpu===1?(K.bpuc||'#1b1d21'):tone,hy=(CH.hipY||100),top=hy*(window.ROLLT||1.075),key='JRL'+base.uuid+us+top;return km(key,()=>{const m=base.clone();const c=col(us);
  m.onBeforeCompile=sh=>{sh.vertexShader='varying float vJY;\n'+sh.vertexShader.replace('#include <begin_vertex>','#include <begin_vertex>\nvJY=position.y;');
   sh.fragmentShader='varying float vJY;\n'+sh.fragmentShader.replace('#include <map_fragment>','#include <map_fragment>\nif(vJY<'+top.toFixed(2)+'){diffuseColor.rgb=vec3('+[c.r,c.g,c.b].map(x=>x.toFixed(3)).join(',')+');}else if(vJY<'+(top+hy*.035).toFixed(2)+'){diffuseColor.rgb*=0.72;}');};
  m.customProgramCacheKey=()=>key;return m;});}
@@ -1729,11 +1719,11 @@ function kitFit(sm,D){const sk=sm.skeleton,bones=sk.bones,n=bones.length,ix={};b
  return {H:topN+drop,legK:(hipY+drop)/hipY,hd:D.hd};}
 /* number and logo patches are small grids pressed onto the real surface of the model (sampled from its vertices) and pinned
    to the bone under them, so they sit on the jersey or pants whatever the build */
-function panelGeo(sm,boneName,ax,sg,ca,cy,w,h,lim,lmax){const sk=sm.skeleton,bi=sk.bones.findIndex(b=>b.name===boneName);if(bi<0)return null;const inv=sk.boneInverses[bi],pa=sm.geometry.attributes.position,v=new T.Vector3(),N=6,R=Math.max(1.6,Math.min(3,w/5)),pts=[],pos=[],uv=[],idx=[],Z=ax==='z',Y=ax==='y';
+function panelGeo(sm,boneName,ax,sg,ca,cy,w,h,lim,lmax,off){const sk=sm.skeleton,bi=sk.bones.findIndex(b=>b.name===boneName);if(bi<0)return null;const inv=sk.boneInverses[bi],pa=sm.geometry.attributes.position,v=new T.Vector3(),N=6,R=Math.max(1.6,Math.min(3,w/5)),pts=[],pos=[],uv=[],idx=[],Z=ax==='z',Y=ax==='y';
  for(let i=0;i<pa.count;i++){const x=pa.getX(i),y0=pa.getY(i),z=pa.getZ(i),a=Z||Y?x:z,y=Y?z:y0,d=Z?z:Y?y0:x;if(sg*d<lim||(lmax!=null&&sg*d>lmax))continue;if(Math.abs(a-ca)<w/2+R&&Math.abs(y-cy)<h/2+R)pts.push(a,y,d);}
  if(!pts.length)return null;let last=null;const D=[];for(let gy=0;gy<=N;gy++)for(let ga=0;ga<=N;ga++){const a=ca-w/2+w*ga/N,y=cy-h/2+h*gy/N;let d=-1e9;for(let k=0;k<pts.length;k+=3)if(Math.abs(pts[k]-a)<R&&Math.abs(pts[k+1]-y)<R)d=Math.max(d,sg*pts[k+2]);if(d>-1e8)last=d;D.push(d);}
  if(last==null)return null;for(let i=0;i<D.length;i++)if(D[i]<-1e8){let b=null,bd=1e9;for(let k=0;k<D.length;k++)if(D[k]>-1e8){const dd=Math.abs((k%(N+1))-(i%(N+1)))+Math.abs(Math.floor(k/(N+1))-Math.floor(i/(N+1)));if(dd<bd){bd=dd;b=D[k];}}D[i]=b==null?last:b;}
- for(let gy=0;gy<=N;gy++)for(let ga=0;ga<=N;ga++){const a=ca-w/2+w*ga/N,y=cy-h/2+h*gy/N,d=sg*(D[gy*(N+1)+ga]+.7);if(Z)v.set(a,y,d);else if(Y)v.set(a,d,y);else v.set(d,y,a);v.applyMatrix4(inv);pos.push(v.x,v.y,v.z);const un=ga/N;uv.push(Y?un:(Z?sg>0:sg<0)?un:1-un,Y?1-gy/N:gy/N);}
+ for(let gy=0;gy<=N;gy++)for(let ga=0;ga<=N;ga++){const a=ca-w/2+w*ga/N,y=cy-h/2+h*gy/N,d=sg*(D[gy*(N+1)+ga]+(off==null?.7:off));if(Z)v.set(a,y,d);else if(Y)v.set(a,d,y);else v.set(d,y,a);v.applyMatrix4(inv);pos.push(v.x,v.y,v.z);const un=ga/N;uv.push(Y?un:(Z?sg>0:sg<0)?un:1-un,Y?1-gy/N:gy/N);}
  for(let gy=0;gy<N;gy++)for(let ga=0;ga<N;ga++){const a=gy*(N+1)+ga,b=a+1,c=a+N+2,d=a+N+1;idx.push(a,b,c,a,c,d);}
  const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(pos,3));g.setAttribute('uv',new T.Float32BufferAttribute(uv,2));g.setIndex(idx);g.computeVertexNormals();return g;}
 function kitPanels(root){let sm=null;root.traverse(m=>{if(m.isSkinnedMesh)sm=m;});const W=n=>{const i=sm.skeleton.bones.findIndex(b=>b.name==='mixamorig'+n);return i<0?null:new T.Matrix4().copy(sm.skeleton.boneInverses[i]).invert().elements;},s2=W('Spine2'),la=W('LeftArm'),ra=W('RightArm'),ll=W('LeftUpLeg'),rl=W('RightUpLeg'),keep=g=>{if(g)g.userData.keep=true;return g;};if(!s2)return null;
@@ -1747,7 +1737,7 @@ function shoulderPanels(){const q=CH.pan;if(!q)return [];return km('SHP2',()=>{c
   let X=0,Z=0,Y=-1e9;for(const r of top){X+=r[0];Z+=r[2];Y=Math.max(Y,r[1]);}X/=top.length;Z/=top.length;
   const pg=panelGeo(q.sm,'mixamorig'+nm2,'y',1,X,Z,8,8,Y-7,Y+3);if(pg){pg.userData.keep=true;out.push([nm2,pg,sx]);}}return out;});}
 function extraGeo(kind){const q=CH.pan;if(!q)return null;return km('XG'+kind,()=>{let g=null;const belt=CH.belt<1e8?CH.belt:(q.hp?q.hp[13]:100);
- if(kind==='tw1'&&q.hp)g=panelGeo(q.sm,'mixamorigHips','z',1,q.cx+6,belt-10,8,19,-99,18);else if(kind==='tw2'&&q.hp)g=panelGeo(q.sm,'mixamorigHips','z',-1,q.cx,belt-10,8,19,-99,18);else if((kind==='tw3'||kind==='tw4')&&q.hp){const sg=kind==='tw3'?q.lsg:-q.lsg;g=panelGeo(q.sm,'mixamorigHips','x',sg,q.hp[14],belt-10,8,19,4,22);}else if(kind==='bp'&&q.sp)g=panelGeo(q.sm,'mixamorigSpine','z',-1,q.cx,(q.sy||131.81)-10,17,10,-99,18);else if(/^h/.test(kind)&&q.nk){const st=+kind.slice(1)||1,[w,h,dy]=[[10,13,3.5],[10,13,3.5],[13,17,2],[4.5,16,2.5],[11,15,2.8]][st];g=panelGeo(q.sm,'mixamorigNeck','z',-1,q.cx,q.nk[13]+dy,w,h,-99,18);}if(g)g.userData.keep=true;return g;});}
+ if(kind==='tw1'&&q.hp)g=panelGeo(q.sm,'mixamorigHips','z',1,q.cx+6,belt-10,8,19,-99,18);else if(kind==='tw2'&&q.hp)g=panelGeo(q.sm,'mixamorigHips','z',-1,q.cx,belt-10,8,19,-99,18);else if((kind==='tw3'||kind==='tw4')&&q.hp){const sg=kind==='tw3'?q.lsg:-q.lsg;g=panelGeo(q.sm,'mixamorigHips','x',sg,q.hp[14],belt-10,8,19,4,22);}else if(kind==='bp'&&q.sp)g=panelGeo(q.sm,'mixamorigSpine','z',-1,q.cx,belt+(window.BPY||5.5),17,10,-99,18,1.5);else if(/^h/.test(kind)&&q.nk){const st=+kind.slice(1)||1,[w,h,dy]=[[10,13,3.5],[10,13,3.5],[13,17,2],[4.5,16,2.5],[11,15,2.8]][st];g=panelGeo(q.sm,'mixamorigNeck','z',-1,q.cx,q.nk[13]+dy,w,h,-99,18);}if(g)g.userData.keep=true;return g;});}
 /* 32 stripe designs: 8 band layouts x 4 styles, each using up to three colours */
 const ST_L=[[[0,.5,0]],[[-.32,.24,0],[.32,.24,0]],[[-.42,.2,0],[0,.2,1],[.42,.2,0]],[[0,.95,0]],[[0,.95,0],[0,.4,1]],[[0,1,0],[0,.66,1],[0,.3,2]],[[-.42,.1,1],[0,.5,0],[.42,.1,1]],[[-.34,.3,0],[0,.3,1],[.34,.3,2]]],ST_LN=['Single','Double','Triple','Wide','Wide with centre','Three nested','Centre with pinstripes','Tri-colour'],ST_SN=['solid','broken','tapered','zigzag'];
 function stripeNames(){const o=[[0,'None']];for(let d=1;d<=32;d++)o.push([d,ST_LN[(d-1)%8]+', '+ST_SN[(d-1)>>3]]);return o;}
@@ -3327,21 +3317,24 @@ const MENUMUS=(()=>{const M={on:sget('gl_menumus')!=='off',vol:+(sget('gl_menuvo
 const BOOTH=(()=>{const B={st:0,buf:{},mode:sget('gl_comm')||'c2',busyTo:0,src:null,dec:0,bedOn:0};
  B.load=()=>{if(B.st)return;B.st=1;const go=()=>{if(!window.GLA){B.st=0;return;}B.st=2;B.decode();};if(window.GLA)go();else{const sc=document.createElement('script');sc.src='models/audio.js';sc.onload=go;sc.onerror=()=>{B.st=0;};document.head.appendChild(sc);}};
  B.pend={};B.dec1=(key,cb)=>{const c=A.ctx,D=window.GLA;if(B.buf[key]){if(cb)cb(B.buf[key]);return;}if(!c||!D)return;const [pk,k]=key.split(':'),b64=D[pk]&&D[pk][k];if(!b64)return;if(B.pend[key]){if(cb)B.pend[key].push(cb);return;}B.pend[key]=cb?[cb]:[];
-   let bin;try{bin=Uint8Array.from(atob(b64),ch=>ch.charCodeAt(0));}catch(e){return;}const done=b=>{B.buf[key]=b;const l=B.pend[key]||[];delete B.pend[key];for(const f of l)try{f(b);}catch(e){}if(key==='cr:bed')B.bed();};try{const p=c.decodeAudioData(bin.buffer,done,()=>{delete B.pend[key];});if(p&&p.catch)p.catch(()=>{});}catch(e){}};
+   let bin;try{bin=Uint8Array.from(atob(b64),ch=>ch.charCodeAt(0));}catch(e){B.decFail(key);return;}const done=b=>{B.buf[key]=b;const l=B.pend[key]||[];delete B.pend[key];for(const f of l)try{f(b);}catch(e){}if(key==='cr:bed')B.bed();};try{const p=c.decodeAudioData(bin.buffer,done,()=>B.decFail(key));if(p&&p.catch)p.catch(()=>B.decFail(key));}catch(e){B.decFail(key);}const pw=B.pend[key];setTimeout(()=>{if(B.pend[key]===pw)B.decFail(key);},4000);};
+ B.decFail=key=>{const l=B.pend[key]||[];delete B.pend[key];for(const f of l)try{f(null);}catch(e){}};
  /* memory matters on phones: decode the crowd bed now and each call the first time it is needed (a few ms) */
  B.decode=()=>{if(!A.ctx||!window.GLA||B.dec)return;B.dec=1;B.dec1('cr:bed');for(const k of ['cheer1','roar','whistle','hut'])B.dec1(k==='whistle'||k==='hut'?'c2:'+k:'cr:'+k);};
+ /* re-kick any of the five pre-decodes that never landed (stalled/failed while the context was suspended); safe to call any time */
+ B.rekick=()=>{if(!A.ctx||!window.GLA||B.st!==2)return;for(const k of ['cr:bed','cr:cheer1','cr:roar','c2:whistle','c2:hut'])B.dec1(k);};
  B.key=k=>{const p=(B.mode==='c1'?'c1':'c2');return window.GLA&&GLA[p]&&GLA[p][k]?p+':'+k:'c2:'+k;};B.get=k=>B.buf[B.key(k)];
  B.ready=()=>B.st===2&&B.dec&&!!A.ctx;
  /* the recorded crowd takes over from the synthesized noise; every crowd level change in the game still applies */
  B.bed=()=>{const c=A.ctx,b=B.buf['cr:bed'];if(!c||!b||B.bedOn||!A.g)return;B.bedOn=1;try{if(A.nf)A.nf.disconnect();const s=c.createBufferSource();s.buffer=b;s.loop=true;const t=c.createGain();t.gain.value=1;s.connect(t);t.connect(A.g);s.start(0,Math.random()*20);B.bedSrc=s;}catch(e){}};
  B.raw=(buf,vol,rate)=>{const c=A.ctx;if(!c||!buf)return null;const s=c.createBufferSource();s.buffer=buf;if(rate)s.playbackRate.value=rate;const g=c.createGain();g.gain.value=vol==null?1:vol;s.connect(g);g.connect(c.destination);s.start();return s;};
  /* the stadium: cheers and a roar on top of the bed */
- B.crowd=(amt,big)=>{if(!A.on||!B.ready())return;const k=big?'roar':['cheer1','cheer2','cheer3'][Math.floor(Math.random()*3)];const b=B.buf['cr:'+k];if(!b){B.dec1('cr:'+k);return;}amt*=.45;const c=A.ctx,s=c.createBufferSource();s.buffer=b;const g=c.createGain(),off=Math.random()*Math.max(0,b.duration-8),d=big?7:4.5;
+ B.crowd=(amt,big)=>{if(!A.on||!B.ready())return;const k=big?'roar':['cheer1','cheer2','cheer3'][Math.floor(Math.random()*3)];const b=B.buf['cr:'+k];if(!b){B.dec1('cr:'+k,bb=>{if(bb)B.crowd(amt,big);});return;}amt*=.45;const c=A.ctx,s=c.createBufferSource();s.buffer=b;const g=c.createGain(),off=Math.random()*Math.max(0,b.duration-8),d=big?7:4.5;
   g.gain.setValueAtTime(0,c.currentTime);g.gain.linearRampToValueAtTime(.55*amt*volOf('crowd'),c.currentTime+.25);g.gain.setValueAtTime(.55*amt*volOf('crowd'),c.currentTime+d-1.5);g.gain.linearRampToValueAtTime(0,c.currentTime+d);s.connect(g);g.connect(c.destination);s.start(0,off);s.stop(c.currentTime+d+.1);};
  B.sfx=(k,vol)=>{if(!A.on||B.mode==='off'||!B.ready())return false;const b=B.buf['c2:'+k];if(!b){B.dec1('c2:'+k);return false;}B.raw(b,(vol==null?1:vol)*volOf('sfx'));return true;};
  /* a call: the referee or PA (any mode but off) or the booth (clip modes); a busy booth drops lower-priority calls */
  B.say=(seq,pri,booth)=>{if(!A.on||B.mode==='off'||!B.ready())return;if(booth&&B.mode==='voice')return;const c=A.ctx,now=c.currentTime;if(now<B.busyTo&&pri<=(B.pri||0))return;if(B.src){try{B.src.stop();}catch(e){}}
-  const names=Array.isArray(seq)?seq:[seq],miss=names.filter(n=>!B.get(n));if(miss.length){const t0=Date.now();let left=miss.length;for(const n of miss)B.dec1(B.key(n),()=>{if(--left===0&&Date.now()-t0<700)B.say(seq,pri,booth);});return;}let t=now+.05;const list=names.map(B.get).filter(Boolean);if(!list.length)return;B.pri=pri;try{Voice.duck(true);}catch(e){}
+  const names=Array.isArray(seq)?seq:[seq],miss=names.filter(n=>!B.get(n));if(miss.length){const t0=Date.now();let left=miss.length,retried=0,good=0;for(const n of miss)B.dec1(B.key(n),b=>{if(b)good=1;if(--left===0&&!retried&&good&&Date.now()-t0<5000){retried=1;B.say(seq,pri,booth);}});return;}let t=now+.05;const list=names.map(B.get).filter(Boolean);if(!list.length)return;B.pri=pri;try{Voice.duck(true);}catch(e){}
   for(const b of list){const s=c.createBufferSource();s.buffer=b;const g=c.createGain();g.gain.value=1.15*volOf('comm');s.connect(g);g.connect(c.destination);s.start(t);B.src=s;t+=b.duration+.08;}
   B.busyTo=t;clearTimeout(B.tm);B.tm=setTimeout(()=>{try{Voice.duck(false);}catch(e){}},(t-now)*1000+50);};
  const PEN=[[/holding/i,'holding'],[/interference/i,'interference'],[/offside/i,'offsides'],[/false start/i,'false_start'],[/delay/i,'delay_of_game'],[/face ?mask/i,'incidental_facemask'],[/roughing the passer/i,'roughing_the_passer'],[/roughing the kicker/i,'roughing_the_kicker'],[/running into/i,'running_into_the_kicker'],[/too many/i,'too_many_men_on_the_field'],[/grounding/i,'intentional_grounding'],[/clipping/i,'clipping'],[/illegal block/i,'illegal_block'],[/encroach/i,'encroachment'],[/personal foul/i,'personal_foul'],[/illegal use/i,'illegal_use_of_hands'],[/illegal procedure|illegal formation/i,'illegal_procedure'],[/ineligible/i,'inelligible_receiver_downfield'],[/movement|illegal motion|shift/i,'movement_before_the_play']];
@@ -3360,7 +3353,7 @@ window._A=A;
    Every tap/key now creates the context if needed and resumes it. iOS also mutes Web Audio when the ring/silent switch
    is off; asking for a 'playback' audio session (Safari 16.4+) and touching a silent media element lifts that. */
 (()=>{let primed=false;const wake=()=>{if(!A.on)return;try{if('audioSession' in navigator)navigator.audioSession.type='playback';}catch(e){}
- if(!A.ctx)A.init();const c=A.ctx;if(c&&c.state!=='running'){c.resume().catch(()=>{});}
+ if(!A.ctx)A.init();const c=A.ctx;if(c){if(!c._bk){c._bk=1;try{c.addEventListener('statechange',()=>{if(c.state==='running'){try{BOOTH.rekick();}catch(e){}}});}catch(e){}}const rk=()=>{try{BOOTH.rekick();}catch(e){}};if(c.state==='running')rk();else c.resume().then(rk).catch(()=>{});}
  if(c)setTimeout(()=>{try{MENUMUS.kick();}catch(e){}},50);if(c&&!primed){primed=true;try{if(window.speechSynthesis&&window.SpeechSynthesisUtterance){const z=new SpeechSynthesisUtterance(' ');z.volume=0;speechSynthesis.speak(z);}}catch(e){}try{const b=c.createBuffer(1,1,22050),s=c.createBufferSource();s.buffer=b;s.connect(c.destination);s.start(0);}catch(e){}
   try{const el=new Audio('data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=');el.setAttribute('playsinline','');el.play().catch(()=>{});}catch(e){}}};
  for(const ev of ['pointerdown','touchend','keydown','click'])document.addEventListener(ev,wake,{capture:true,passive:true});
