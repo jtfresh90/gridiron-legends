@@ -9,11 +9,12 @@ canvas{display:block}</style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/FBXLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
 </head>
 <body>
 <div id="log">MF Integration Prototype — test build (test-mf)
-Left: game character playing the retargeted MF idle, MF helmet + facemask on its head.
-Right: MF body (native 166-bone skeleton) playing its original MF idle.
+Left: game character playing the retargeted MF idle, textured MF helmet + facemask fitted on its head.
+Right: MF body (native 166-bone skeleton) dressed in textured jersey + pants, playing its original MF idle.
 booting…</div>
 <script>
 const log = document.getElementById('log');
@@ -39,12 +40,28 @@ function loadModule(name, base){
     document.head.appendChild(sc);
   });
 }
-function parseFBX(b64){
+// Chunked modules (mf_*_tex GLBs): stub + p1..pN in order, each appending
+// to GLM[name]. Load each module exactly ONCE — re-loading appends the
+// chunks a second time and corrupts the base64.
+function loadChunks(name, n, base){
+  let p = loadScript(name, base);
+  for(let i=1;i<=n;i++) p = p.then(()=>loadScript(name+'_p'+i, base));
+  return p.then(()=>{ if(window.GLM && window.GLM[name]) return window.GLM[name]; throw new Error('GLM['+name+'] missing after '+n+' chunks'); });
+}
+function b64ToBuf(b64){
   const bin = atob(b64);
   const buf = new ArrayBuffer(bin.length);
   const u8 = new Uint8Array(buf);
   for(let i=0;i<bin.length;i++) u8[i] = bin.charCodeAt(i);
-  return new THREE.FBXLoader().parse(buf, '');
+  return buf;
+}
+function parseFBX(b64){
+  return new THREE.FBXLoader().parse(b64ToBuf(b64), '');
+}
+function parseGLB(b64){
+  return new Promise((res, rej)=>{
+    new THREE.GLTFLoader().parse(b64ToBuf(b64), '', res, rej);
+  });
 }
 function describe(obj, tag){
   let meshes=0, verts=0, bones=0, clips=0;
@@ -67,6 +84,20 @@ function describe(obj, tag){
 // bind positions + quaternion tracks carry the pose.
 function stripPositionTracks(clip){
   clip.tracks = clip.tracks.filter(t=>!/\.position$/.test(t.name));
+  return clip;
+}
+// Scale tracks (measured Nov 16, scale probe — wirein-verify/probe-scale.html):
+// the native clip carries ONE non-unit scale track — SK_regularMuscular01_full
+// at a CONSTANT 100.0 (Blender's cm->m export baked the unit scale onto the
+// mesh node). On the FBX body that track binds to the mesh object and is
+// harmless (the skeleton is NOT under it), but in the GLB the skeleton root
+// is a CHILD of the mesh node, so the mixer scaled the whole skeleton 100x
+// (measured: body segments 64.7/63.5/101.0/98.3 instead of 0.65/0.63/1.01/
+// 0.98, pelvis z 228 instead of 2.28). All 167 scale tracks are CONSTANT
+// (no motion — the one non-unit track is flat 100.0, the rest flat 1.0), so
+// delete them: bind scales carry the pose.
+function stripScaleTracks(clip){
+  clip.tracks = clip.tracks.filter(t=>!/\.scale$/.test(t.name));
   return clip;
 }
 // The native MF clip's quaternions are in the ORIGINAL MF bone frames, but
@@ -153,39 +184,146 @@ function convertNativeClip(clip, rootObj){
     say('mf_idle: stripped position tracks, '+idleClip.tracks.length+' tracks left');
     const mixer1 = new THREE.AnimationMixer(ch);
     mixer1.clipAction(idleClip).play(); mixers.push(mixer1);
-    // 3. MF helmet + facemask attached to the game head (game's helmInstance pattern)
-    for(const m of ['mf_helmet01','mf_facemask01']){
-      const b64 = await loadModule(m);
-      const o = parseFBX(b64); describe(o, m);
-      const mesh = o.children.find(c=>c.isMesh) || o;
-      if(headBone){
-        // Geometry is absolute in the 422-frame (MF body scale); the game
-        // character is 174-frame. Bake the FBX node transform (rot -90deg X,
-        // scale x100) into the geometry, scale to the character frame, then
-        // attach() preserves the bind world transform under the head bone.
-        if(!mesh.isSkinnedMesh){ mesh.updateMatrix(); mesh.geometry.applyMatrix4(mesh.matrix); mesh.position.set(0,0,0); mesh.quaternion.identity(); mesh.scale.set(1,1,1); }
-        mesh.scale.setScalar(174.491/422.1);
-        ch.add(mesh); ch.updateMatrixWorld(true);
-        headBone.attach(mesh);
-      } else { scene.add(mesh); }
+    // 3. MF helmet (textured GLB) + facemask fitted to the game head.
+    // HELMET FIT (measured Nov 16, wire-in probe — mf-textures/STATUS.md):
+    // game head, character file space (174-frame): head bone
+    // [1.46,149.17,-1.58]; head cover y 144.21..170.34, centre
+    // [-0.68,157.28,5.30]; eyes z 6.1..9.09 (face front is +Z).
+    // GLB helmet 0.244 x 0.288 x 0.294 m, geometry centre [0,0.075,0.023] m.
+    // The old FBX-helmet attach() preserved the MF-frame world transform and
+    // sat the helmet ~8 units too high (crown ~10 above the head top, the
+    // 0.420 gap in Joshua's photo) with the mask detached in front.
+    // Fit: seat the helmet so its geometry centre lands on
+    // [-0.68,158.5,5.30] — crown 2.0 above the head top, rim at chin level —
+    // and the facemask (FBX, 422-frame, geometry centre [-1.44,388.09,30.82]
+    // = [-0.60,160.44,12.74] in the 174-frame) on [-0.60,153.35,12.74], i.e.
+    // shifted by the helmet's vertical correction (-7.09) so it stays
+    // mounted to the helmet front. Both are attached to the head bone, so
+    // they follow the idle head turn.
+    if(headBone){
+      ch.updateMatrixWorld(true);
+      // Seat a mesh on the head bone so its geometry centre lands on the
+      // target (character file space), at the given world scale (geometry
+      // units -> page units). The mesh must already be attach()ed to the
+      // head bone; the local transform is computed from the bind-pose
+      // head-bone world matrix, so call this before any mixer advances.
+      function seatOnHead(mesh, geoCentre, targetCentreFile, worldScale){
+        const targetWorld = new THREE.Vector3(targetCentreFile[0], targetCentreFile[1], targetCentreFile[2]).applyMatrix4(ch.matrixWorld);
+        // Pure rotation only: ch.matrixWorld carries ch's 0.02419 scale, and
+        // setFromRotationMatrix on a scaled matrix returns a NON-UNIT
+        // quaternion, which both rotates wrong and scales the offset (the
+        // helmet landed ~0.1 high with a 0.274 offset instead of 0.285, and
+        // the mask landed far off its target). ch.quaternion is the pure
+        // +90deg X rotation.
+        const R = ch.quaternion.clone();
+        const off = new THREE.Vector3(geoCentre[0], geoCentre[1], geoCentre[2]).multiplyScalar(worldScale).applyQuaternion(R);
+        const pos = targetWorld.clone().sub(off);
+        const M = new THREE.Matrix4().compose(pos, R, new THREE.Vector3(worldScale, worldScale, worldScale));
+        const local = new THREE.Matrix4().copy(headBone.matrixWorld).invert().multiply(M);
+        local.decompose(mesh.position, mesh.quaternion, mesh.scale);
+        return {worldPos: pos.toArray().map(v=>+v.toFixed(3)), worldScale: +worldScale.toFixed(4)};
+      }
+      const helmB64 = await loadChunks('mf_helmet01_tex', 2);
+      const helmG = await parseGLB(helmB64);
+      describe(helmG.scene, 'mf_helmet01_tex (GLB)');
+      const helmMesh = helmG.scene.children.find(c=>c.isMesh);
+      headBone.attach(helmMesh);
+      const helmSeat = seatOnHead(helmMesh, [0, 0.075, 0.023], [-0.68, 158.5, 5.30], 4.221/1.812);
+      say('helmet seated: ' + JSON.stringify(helmSeat));
+      const maskB64 = await loadModule('mf_facemask01');
+      const maskObj = parseFBX(maskB64); describe(maskObj, 'mf_facemask01');
+      const maskMesh = maskObj.children.find(c=>c.isMesh) || maskObj;
+      if(!maskMesh.isSkinnedMesh){ maskMesh.updateMatrix(); maskMesh.geometry.applyMatrix4(maskMesh.matrix); maskMesh.position.set(0,0,0); maskMesh.quaternion.identity(); maskMesh.scale.set(1,1,1); }
+      // Solid dark steel — the mask has no textures (M_Masks is a
+      // flat-parameter material; verified by resolve, see STATUS.md).
+      maskMesh.material = new THREE.MeshStandardMaterial({color: 0x2e3236, metalness: 0.65, roughness: 0.4});
+      headBone.attach(maskMesh);
+      const maskSeat = seatOnHead(maskMesh, [-1.44, 388.09, 30.82], [-0.60, 153.35, 12.74], 0.01);
+      say('facemask seated: ' + JSON.stringify(maskSeat));
+    } else {
+      say('head bone NOT FOUND — helmet/facemask skipped');
     }
-    // 4. MF body (native 166-bone skeleton, split stub + 2 chunks) + original MF idle clip
-    await loadScript('mf_body_regularmuscular');
-    await loadScript('mf_body_regularmuscular_p1');
-    await loadScript('mf_body_regularmuscular_p2');
-    const bodyB64 = window.GLM['mf_body_regularmuscular'];
-    const body = parseFBX(bodyB64); describe(body, 'mf_body_regularmuscular');
-    // MF body file space is Y-up, 422.1 units tall; same Z-up 4.221 framing.
-    body.rotation.x = Math.PI/2; body.scale.setScalar(4.221/422.1); body.position.set(1.3, 0, 0);
-    scene.add(body);
+    // 4. MF dressed figure: textured GLB body + jersey + pants (native
+    // 166-bone skeleton). All three GLBs share the MF metre frame (Y-up,
+    // origin at feet): body y 0.017..1.829, jersey y 0.98..1.622, pants
+    // y 0.391..1.074 — same root transform, one shared skeleton.
+    // The body has NO skin texture (flat-parameter material; the mapped GLB
+    // uses an ASSUMED skin-tone baseColorFactor [0.66,0.48,0.37] — see
+    // STATUS.md). The jersey/pants colours are team-colour parameters, so
+    // their mapped GLBs use a light-grey baseColorFactor placeholder.
+    const bodyB64 = await loadChunks('mf_body_tex', 2);
+    const bodyG = await parseGLB(bodyB64);
+    describe(bodyG.scene, 'mf_body_tex (GLB)');
+    const jerseyB64 = await loadChunks('mf_jersey_tex', 9);
+    const jerseyG = await parseGLB(jerseyB64);
+    describe(jerseyG.scene, 'mf_jersey_tex (GLB)');
+    const pantsB64 = await loadChunks('mf_pants_tex', 3);
+    const pantsG = await parseGLB(pantsB64);
+    describe(pantsG.scene, 'mf_pants_tex (GLB)');
+    const fig = new THREE.Group();
+    fig.add(bodyG.scene);
+    // Move only the jersey/pants MESHES into the figure (not their skeleton
+    // roots); they get rebound to the body's skeleton below.
+    const clothMeshes = [];
+    jerseyG.scene.traverse(o=>{ if(o.isSkinnedMesh) clothMeshes.push(o); });
+    pantsG.scene.traverse(o=>{ if(o.isSkinnedMesh) clothMeshes.push(o); });
+    for(const m of clothMeshes) fig.add(m);
+    // MF GLB frame is metres, 1.812 tall; the page is Z-up, 4.221 tall.
+    fig.rotation.x = Math.PI/2; fig.scale.setScalar(4.221/1.812); fig.position.set(1.3, 0, 0);
+    scene.add(fig);
+    fig.updateMatrixWorld(true);
+    const bodyMeshes = []; bodyG.scene.traverse(o=>{ if(o.isSkinnedMesh) bodyMeshes.push(o); });
+    const bodySkel = bodyMeshes[0].skeleton;
+    // REBIND (measured Nov 16, cloth probe): two things the first wire-in
+    // got wrong, both proven in the probe (mf-integration/work/
+    // wirein-verify/probe-cloth.html):
+    // (a) BIND MATRIX: GLTFLoader binds each GLB with mesh.matrixWorld AT
+    // PARSE TIME (identity — the mesh node has no transform). The first
+    // wire-in bound the cloth with m.matrixWorld AFTER fig's rotation/
+    // scale/position, i.e. fig's matrix — the cloth then got a DOUBLED fig
+    // transform and rendered off-screen (invisible from every angle, even
+    // with frustumCulled=false). Bind with identity, like the body's own
+    // bind, and the jersey/pants render in place.
+    // (b) JOINT ORDER: the cloth GLBs omit bones the body keeps (pants omit
+    // ik_hand_l/r, towel x6, rootProxy, SyncOther1 — 113 index mismatches
+    // from index 43; jersey omits only the 6 towel bones at the end, and
+    // no jersey vert uses them). skinIndex indexes the CLOTH's joint list,
+    // but after the rebind the shader indexes the BODY's list — rewrite the
+    // indices by bone NAME so each vert follows the bone it was authored
+    // for. (At bind pose the indices don't matter — every bone's matrix is
+    // the fig matrix — but once the idle moves the bones, a shifted index
+    // pulls the cloth with the wrong bone.)
+    const bodyJointIndex = new Map(bodySkel.bones.map((b,i)=>[b.name,i]));
+    function remapSkinIndices(mesh){
+      const srcNames = mesh.skeleton.bones.map(b=>b.name);
+      const idx = mesh.geometry.attributes.skinIndex;
+      if(!idx) return 0;
+      let changed = 0;
+      for(let i=0;i<idx.count*4;i++){
+        const src = idx.array[i];
+        const dst = bodyJointIndex.get(srcNames[src]);
+        if(dst===undefined || dst===src) continue;
+        idx.array[i]=dst; changed++;
+      }
+      idx.needsUpdate = true;
+      return changed;
+    }
+    for(const m of clothMeshes){
+      const n = remapSkinIndices(m);
+      say('remap skin indices '+m.name+': '+n+' changed');
+      m.skeleton = bodySkel; m.bind(bodySkel, new THREE.Matrix4());
+    }
+    say('rebind: '+clothMeshes.length+' cloth meshes -> body skeleton ('+bodySkel.bones.length+' bones)');
     const origB64 = await loadModule('mf_idle_orig');
     const origObj = parseFBX(origB64); describe(origObj, 'mf_idle_orig (MF native)');
-    // Native clip: re-express quaternions onto the body's bind frames
+    // Native clip: re-express quaternions onto the GLB body's bind frames
     // (per-bone delta transfer) and strip the poisoned position tracks.
-    const origClip = convertNativeClip(origObj.animations[0], body);
+    // Probe-verified: all 167 track nodes exist in the GLB body.
+    const origClip = convertNativeClip(origObj.animations[0], fig);
     stripPositionTracks(origClip);
-    say('mf_idle_orig: converted + stripped position tracks, '+origClip.tracks.length+' tracks left');
-    const mixer2 = new THREE.AnimationMixer(body);
+    stripScaleTracks(origClip);
+    say('mf_idle_orig: converted + stripped position+scale tracks, '+origClip.tracks.length+' tracks left');
+    const mixer2 = new THREE.AnimationMixer(fig);
     mixer2.clipAction(origClip).play(); mixers.push(mixer2);
     // 5. retargeted run + tackle clips parse (not played here, just verified)
     for(const m of ['mf_run','mf_tackle']){
