@@ -55,6 +55,48 @@ function describe(obj, tag){
   if(obj.animations) obj.animations.forEach(a=>say('   clip '+a.name+' dur='+a.duration.toFixed(2)+'s tracks='+a.tracks.length));
   return {meshes, verts, bones, clips};
 }
+// Clip-frame repair (measured Nov 16, test-mf phone-photo diagnosis — see
+// mf-integration/work/DIAG_TESTMF.md):
+// Blender's FBX export bakes EVERY bone's rest offset into a .position
+// track. The retargeted clips were baked in a ~2.49x frame, so their
+// position tracks stretch the game character 2.49x (limbs 1.31/1.36/2.59/
+// 2.67 vs bind 0.53/0.55/1.04/1.08, head z 4.85, feet z -2.52); the native
+// MF clip's positions are metres against a cm skeleton, collapsing the MF
+// body to 0.43x. The tracks are CONSTANT (no real motion — only the Hips
+// translation varies, and the page already strips it), so delete them all:
+// bind positions + quaternion tracks carry the pose.
+function stripPositionTracks(clip){
+  clip.tracks = clip.tracks.filter(t=>!/\.position$/.test(t.name));
+  return clip;
+}
+// The native MF clip's quaternions are in the ORIGINAL MF bone frames, but
+// the Blender-exported body skeleton has different per-bone rest frames
+// (measured: clip frame-0 vs bind differs by up to 127 deg on the pelvis,
+// 121 deg on the clavicle). Re-express each track as a delta from the
+// clip's first key onto the bind pose: q_new(t) = D_bone * q_clip(t) with
+// D_bone = q_bind * q_clip(0)^-1. At t=0 this reproduces the bind pose
+// exactly; over time it applies the clip's own rotation deltas. The root's
+// D also restores its +90deg X bind rotation, which the clip's identity
+// root track was deleting — that alone laid the body flat (pelvis z 2.24
+// -> 0.01, head z 3.79 -> 1.35).
+function convertNativeClip(clip, rootObj){
+  const byName = {};
+  rootObj.traverse(o=>{ if(!byName[o.name]) byName[o.name] = o; });
+  for(const t of clip.tracks){
+    if(!/\.quaternion$/.test(t.name)) continue;
+    const node = byName[t.name.slice(0, -'.quaternion'.length)];
+    if(!node) continue;
+    const q0 = new THREE.Quaternion(t.values[0], t.values[1], t.values[2], t.values[3]);
+    const D = node.quaternion.clone().multiply(q0.clone().invert());
+    const v = t.values;
+    for(let i=0;i<v.length;i+=4){
+      const q = new THREE.Quaternion(v[i], v[i+1], v[i+2], v[i+3]);
+      const qc = D.clone().multiply(q);
+      v[i]=qc.x; v[i+1]=qc.y; v[i+2]=qc.z; v[i+3]=qc.w;
+    }
+  }
+  return clip;
+}
 (async ()=>{
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x303035);
@@ -104,11 +146,11 @@ function describe(obj, tag){
     const idleB64 = await loadModule('mf_idle');
     const idleObj = parseFBX(idleB64); describe(idleObj, 'mf_idle (retargeted)');
     const idleClip = idleObj.animations[0];
-    // The retarget baked the MF-frame pelvis translation (hips y~243 in a
-    // 422-tall frame); the game hips bind at y~104. Strip the hips POSITION
-    // track so the character stays planted — rotations carry the idle.
-    idleClip.tracks = idleClip.tracks.filter(t=>!(/Hips/i.test(t.name) && /\.position$/.test(t.name)));
-    say('mf_idle: stripped hips position track, '+idleClip.tracks.length+' tracks left');
+    // Strip ALL .position tracks (not just Hips): the retarget baked every
+    // bone's rest offset in a ~2.49x frame — leaving them stretches the
+    // character 2.49x. Rotations carry the idle.
+    stripPositionTracks(idleClip);
+    say('mf_idle: stripped position tracks, '+idleClip.tracks.length+' tracks left');
     const mixer1 = new THREE.AnimationMixer(ch);
     mixer1.clipAction(idleClip).play(); mixers.push(mixer1);
     // 3. MF helmet + facemask attached to the game head (game's helmInstance pattern)
@@ -138,12 +180,18 @@ function describe(obj, tag){
     scene.add(body);
     const origB64 = await loadModule('mf_idle_orig');
     const origObj = parseFBX(origB64); describe(origObj, 'mf_idle_orig (MF native)');
+    // Native clip: re-express quaternions onto the body's bind frames
+    // (per-bone delta transfer) and strip the poisoned position tracks.
+    const origClip = convertNativeClip(origObj.animations[0], body);
+    stripPositionTracks(origClip);
+    say('mf_idle_orig: converted + stripped position tracks, '+origClip.tracks.length+' tracks left');
     const mixer2 = new THREE.AnimationMixer(body);
-    mixer2.clipAction(origObj.animations[0]).play(); mixers.push(mixer2);
+    mixer2.clipAction(origClip).play(); mixers.push(mixer2);
     // 5. retargeted run + tackle clips parse (not played here, just verified)
     for(const m of ['mf_run','mf_tackle']){
       const b64 = await loadModule(m);
       const o = parseFBX(b64); describe(o, m+' (retargeted, parse-only)');
+      stripPositionTracks(o.animations[0]); // same baked-offset issue if ever played
     }
     say('ALL MODULES LOADED + PARSED — prototype boot OK');
   }catch(e){ say('ERROR: ' + e.message); }
